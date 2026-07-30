@@ -162,9 +162,9 @@
   min-height: 0 !important;
 }
 
-/* Hide the duplicate in-card reason popover, but retain the useful mini chart
-   and its compact trend summary. */
-.market-compact-card [data-compact-insight] > span:first-child {
+/* Keep the state label in-card, but hide the duplicate explanatory suffix.
+   The detailed reason remains in the full detail board. */
+.market-compact-card [data-signal-reason-text] {
   display: none !important;
 }
 
