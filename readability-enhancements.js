@@ -325,6 +325,98 @@
   setInterval(simplifyHeader, 30000);
 })();
 
+/* Dashboard reading aids: clear signal hierarchy, market freshness, a compact
+   market-tape mode, and a one-glance summary above the selected detail chart. */
+(() => {
+  const nySessionStatus = () => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date());
+    const value = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+    const minutes = Number(value.hour) * 60 + Number(value.minute);
+    const isWeekday = !["Sat", "Sun"].includes(value.weekday);
+    return isWeekday && minutes >= 570 && minutes < 960 ? "미국 장중" : "미국 장 마감";
+  };
+
+  const setupMarketTape = () => {
+    const tape = document.querySelector("[data-market-tape]");
+    if (!tape) return;
+    const shell = tape.firstElementChild;
+    const viewport = tape.querySelector("[data-market-tape-viewport]");
+    if (!shell || !viewport) return;
+
+    let freshness = tape.querySelector("[data-market-freshness]");
+    if (!freshness) {
+      freshness = document.createElement("span");
+      freshness.dataset.marketFreshness = "";
+      freshness.style.cssText = "flex:0 0 auto;color:#64748b;font-size:10px;font-weight:850;white-space:nowrap";
+      shell.append(freshness);
+    }
+    freshness.textContent = `${nySessionStatus()} · 갱신 ${new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}`;
+
+    let toggle = tape.querySelector("[data-market-toggle]");
+    if (!toggle) {
+      toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.dataset.marketToggle = "";
+      toggle.style.cssText = "flex:0 0 auto;margin-right:7px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:5px 7px;color:#475569;font-size:10px;font-weight:900;cursor:pointer";
+      toggle.addEventListener("click", () => {
+        const collapsed = tape.dataset.marketCollapsed !== "true";
+        tape.dataset.marketCollapsed = String(collapsed);
+        viewport.style.display = collapsed ? "none" : "block";
+        toggle.textContent = collapsed ? "지표 보기" : "접기";
+        toggle.setAttribute("aria-expanded", String(!collapsed));
+        localStorage.setItem("nasdaq-market-tape-collapsed", String(collapsed));
+      });
+      shell.append(toggle);
+    }
+    const collapsed = localStorage.getItem("nasdaq-market-tape-collapsed") === "true";
+    tape.dataset.marketCollapsed = String(collapsed);
+    viewport.style.display = collapsed ? "none" : "block";
+    toggle.textContent = collapsed ? "지표 보기" : "접기";
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+  };
+
+  const metricText = (label) => {
+    const labelNode = [...document.querySelectorAll("div")].find((node) => node.textContent.trim() === label);
+    const metricCard = labelNode?.parentElement;
+    return metricCard?.querySelector(".text-xl")?.textContent?.trim() || "-";
+  };
+
+  const setupDetailSummary = () => {
+    const chart = document.querySelector('[aria-label$="볼린저밴드 차트"]');
+    if (!chart) return;
+    const symbol = chart.getAttribute("aria-label")?.replace(/ 볼린저밴드 차트$/, "") || "선택 종목";
+    const card = [...document.querySelectorAll(".market-compact-card")].find((item) => item.textContent.includes(symbol));
+    const status = card?.querySelector("[data-signal-status]")?.textContent?.trim() || "신호 확인 중";
+    const detail = card?.querySelector("[data-signal-reason]")?.dataset.reasonDetail || "지표를 확인 중입니다.";
+    const reason = detail.split(" · ").slice(1, 3).join(" · ") || detail;
+    const lower = metricText("하단까지");
+    const upper = metricText("상단까지");
+    const host = chart.parentElement;
+    if (!host) return;
+    let summary = host.parentElement?.querySelector("[data-detail-summary]");
+    if (!summary) {
+      summary = document.createElement("section");
+      summary.dataset.detailSummary = "";
+      summary.style.cssText = "display:grid;gap:6px;margin:0 0 12px;padding:12px 14px;border:1px solid #dbeafe;border-radius:14px;background:linear-gradient(135deg,#f8fbff,#fff);color:#0f172a";
+      host.before(summary);
+    }
+    summary.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><strong style="font-size:14px">${symbol} 한눈에 보기</strong><span style="border-radius:999px;background:#e2e8f0;padding:4px 8px;color:#334155;font-size:12px;font-weight:900">${status}</span></div><div style="font-size:13px;font-weight:750;color:#475569">핵심 흐름 · ${reason}</div><div style="font-size:13px;font-weight:750;color:#475569">주의 가격대 · BB 하단 ${lower} / 상단 ${upper}</div>`;
+  };
+
+  const enhanceDashboard = () => {
+    setupMarketTape();
+    setupDetailSummary();
+  };
+  setTimeout(enhanceDashboard, 2200);
+  setInterval(enhanceDashboard, 15000);
+})();
+
 /* Replace the always-visible ticker tools with a compact, optional daily focus panel. */
 (() => {
   const tickerOf = (card) => card.querySelector("img[alt$=' logo']")?.alt?.replace(/ logo$/, "") || "종목";

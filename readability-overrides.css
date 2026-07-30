@@ -213,3 +213,20 @@ section:has(input[placeholder="목록에서 검색"]) {
 section:has(input[placeholder="목록에서 검색"]) > div:has(input[placeholder="목록에서 검색"]) {
   display: none !important;
 }
+
+/* Make the decision status unmistakable; pattern tags remain supporting context. */
+.market-compact-card [data-signal-reason] {
+  padding: 5px 8px !important;
+  font-size: 11px !important;
+  letter-spacing: 0.01em;
+}
+
+.market-compact-card [data-signal-status] {
+  font-weight: 950;
+}
+
+@media (max-width: 640px) {
+  [data-market-freshness] {
+    display: none !important;
+  }
+}
