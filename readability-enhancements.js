@@ -485,7 +485,8 @@
     setupTodayReason();
   };
   setTimeout(enhanceDashboard, 2200);
-  setInterval(enhanceDashboard, 15000);
+  setTimeout(enhanceDashboard, 6000);
+  setInterval(enhanceDashboard, 5000);
 })();
 
 /* Replace the always-visible ticker tools with a compact, optional daily focus panel. */
