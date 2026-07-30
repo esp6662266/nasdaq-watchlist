@@ -1,0 +1,156 @@
+/* Readability pass: let price and signal lead, keep secondary metrics quiet. */
+.market-compact-card {
+  min-height: 180px !important;
+  padding: 11px !important;
+  border-width: 1px !important;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.10) !important;
+}
+
+.market-compact-card:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16) !important;
+}
+
+/* A short vertical flip makes the Signal Board rotation feel intentional without hiding the quote. */
+@keyframes signal-board-flip {
+  0% { opacity: 0; transform: perspective(520px) rotateX(-72deg) translateY(-8px); }
+  62% { opacity: 1; transform: perspective(520px) rotateX(7deg) translateY(1px); }
+  100% { opacity: 1; transform: perspective(520px) rotateX(0) translateY(0); }
+}
+
+.signal-flip-content {
+  animation: signal-board-flip 560ms cubic-bezier(.2,.8,.2,1) both;
+  transform-origin: center top;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signal-flip-content { animation: none; }
+}
+
+/* Secondary metrics are available in the detail view; avoid repeating them in every card. */
+.market-compact-card > .mt-2.grid.grid-cols-3 {
+  display: none !important;
+}
+
+.market-compact-card .text-\[10px\].font-bold.text-zinc-500 {
+  color: #64748b !important;
+}
+
+.market-compact-card .text-sm.font-black.text-zinc-950 {
+  font-size: 1rem !important;
+  letter-spacing: -0.02em;
+}
+
+.market-compact-card .mt-1.flex.items-center.justify-between > :first-child {
+  font-size: 0.95rem !important;
+  font-weight: 900 !important;
+}
+
+/* The existing score status carries one factual reason; details appear on
+   hover and keyboard focus without adding a second signal badge. */
+[data-signal-reason] {
+  position: relative;
+}
+
+[data-signal-reason]:hover::after,
+.market-compact-card:focus-visible [data-signal-reason]::after {
+  content: attr(data-reason-detail);
+  position: absolute;
+  z-index: 60;
+  left: 0;
+  top: calc(100% + 6px);
+  width: max-content;
+  max-width: min(260px, 72vw);
+  white-space: normal;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: #0f172a;
+  color: #f8fafc;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: left;
+}
+
+/* Use one calm background system and reserve color for the decision signal. */
+.market-compact-card.market-signal-watch-buy {
+  background: #eff6ff !important;
+  border-color: #93c5fd !important;
+  box-shadow: inset 4px 0 #2563eb, 0 8px 20px rgba(15, 23, 42, 0.10) !important;
+}
+
+/* A text label supplements color for faster, accessible signal recognition. */
+.market-compact-card.market-signal-watch-buy::after,
+.market-compact-card.market-signal-watch-sell::after {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+/* The in-card primary badge now carries the decision; do not repeat it in a corner label. */
+.market-compact-card.market-signal-watch-buy::after,
+.market-compact-card.market-signal-watch-sell::after {
+  display: none !important;
+}
+
+.market-compact-card.market-signal-watch-buy::after {
+  content: "매수 관심";
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.market-compact-card.market-signal-watch-sell::after {
+  content: "매도 주의";
+  background: #ffe4e6;
+  color: #be123c;
+}
+
+.market-compact-card.market-signal-watch-sell {
+  background: #fff1f2 !important;
+  border-color: #fda4af !important;
+  box-shadow: inset 4px 0 #e11d48, 0 8px 20px rgba(15, 23, 42, 0.10) !important;
+}
+
+.market-compact-card:not(.market-signal-watch-buy):not(.market-signal-watch-sell) {
+  background: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  box-shadow: inset 4px 0 #94a3b8, 0 8px 20px rgba(15, 23, 42, 0.10) !important;
+}
+
+/* Make the board-level warning compact rather than a competing content panel. */
+.market-compact-card ~ * .text-xl.font-black.text-rose-300 {
+  color: #fb7185 !important;
+}
+
+@media (max-width: 640px) {
+  .market-compact-card {
+    min-height: 174px !important;
+  }
+}
+
+@media (min-width: 640px) {
+  .fear-greed-card {
+    min-height: 112px !important;
+  }
+}
+
+/* In a wide or full-screen view, let the board use the available canvas instead
+   of stopping at a short fixed content column. */
+@media (min-width: 1280px) {
+  .max-w-7xl {
+    max-width: none !important;
+    width: 100% !important;
+  }
+
+  main section:has(.market-compact-card) {
+    min-height: calc(100vh - 210px);
+  }
+}
