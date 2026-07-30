@@ -154,3 +154,45 @@
     min-height: calc(100vh - 210px);
   }
 }
+
+/* Keep the board scannable: detailed signal reasons belong in the detail board,
+   while the compact card retains the data hook used for sorting. */
+.market-compact-card [data-compact-insight] {
+  display: none !important;
+}
+
+/* The detail board is the primary reading surface. Increase its type scale
+   without changing the chart geometry or the surrounding board layout. */
+[role="dialog"][aria-modal="true"] {
+  font-size: 1.08rem;
+}
+
+[role="dialog"][aria-modal="true"] .text-xs {
+  font-size: 0.84rem !important;
+  line-height: 1.4 !important;
+}
+
+[role="dialog"][aria-modal="true"] .text-sm {
+  font-size: 1rem !important;
+  line-height: 1.5 !important;
+}
+
+[role="dialog"][aria-modal="true"] .text-base {
+  font-size: 1.12rem !important;
+}
+
+[role="dialog"][aria-modal="true"] .text-lg,
+[role="dialog"][aria-modal="true"] .text-xl {
+  font-size: 1.35rem !important;
+  line-height: 1.3 !important;
+}
+
+[role="dialog"][aria-modal="true"] button {
+  font-size: 0.98rem !important;
+}
+
+@media (max-width: 640px) {
+  [role="dialog"][aria-modal="true"] {
+    font-size: 1rem;
+  }
+}
