@@ -203,3 +203,13 @@
     font-size: 1rem;
   }
 }
+
+/* The detail-chart view should stay focused on the selected symbol. Hide the
+   adjacent search/list panel and let the chart column use the full width. */
+section:has(input[placeholder="목록에서 검색"]) {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+section:has(input[placeholder="목록에서 검색"]) > div:has(input[placeholder="목록에서 검색"]) {
+  display: none !important;
+}
