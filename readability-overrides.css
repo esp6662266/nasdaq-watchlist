@@ -158,6 +158,13 @@
 /* Keep the board scannable: detailed signal reasons belong in the detail board,
    while the compact card retains the data hook used for sorting. */
 .market-compact-card [data-compact-insight] {
+  display: flex !important;
+  min-height: 0 !important;
+}
+
+/* Hide the duplicate in-card reason popover, but retain the useful mini chart
+   and its compact trend summary. */
+.market-compact-card [data-compact-insight] > span:first-child {
   display: none !important;
 }
 
