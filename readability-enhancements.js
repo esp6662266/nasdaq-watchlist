@@ -409,9 +409,80 @@
     summary.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><strong style="font-size:14px">${symbol} 한눈에 보기</strong><span style="border-radius:999px;background:#e2e8f0;padding:4px 8px;color:#334155;font-size:12px;font-weight:900">${status}</span></div><div style="font-size:13px;font-weight:750;color:#475569">핵심 흐름 · ${reason}</div><div style="font-size:13px;font-weight:750;color:#475569">주의 가격대 · BB 하단 ${lower} / 상단 ${upper}</div>`;
   };
 
+  const addSvg = (tag, attributes, text) => {
+    const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    Object.entries(attributes).forEach(([name, value]) => element.setAttribute(name, String(value)));
+    if (text) element.textContent = text;
+    return element;
+  };
+
+  const setupChartGuides = () => {
+    const chart = document.querySelector('[aria-label$="볼린저밴드 차트"]');
+    if (!chart) return;
+
+    const labels = { "1M": "20일", "3M": "60일", "6M": "120일", "1Y": "1년" };
+    chart.closest(".chart-stage")?.querySelectorAll("button").forEach((button) => {
+      const original = button.dataset.rangeOriginal || button.textContent.trim();
+      if (!labels[original]) return;
+      button.dataset.rangeOriginal = original;
+      button.textContent = labels[original];
+      button.setAttribute("aria-label", `차트 기간 ${labels[original]}`);
+    });
+
+    chart.querySelector("[data-entry-guides]")?.remove();
+    const chartText = chart.closest(".min-w-0")?.innerText || "";
+    const levels = [
+      { key: "1차", color: "#2563eb", value: Number(chartText.match(/1차\s*\$([\d,.]+)/)?.[1]?.replace(/,/g, "")) },
+      { key: "2차", color: "#7c3aed", value: Number(chartText.match(/2차\s*\$([\d,.]+)/)?.[1]?.replace(/,/g, "")) },
+      { key: "주의", color: "#e11d48", value: Number(chartText.match(/주의\s*\$([\d,.]+)/)?.[1]?.replace(/,/g, "")) },
+    ].filter((level) => Number.isFinite(level.value));
+    const axis = [...chart.querySelectorAll("g")].map((group) => {
+      const line = group.querySelector("line");
+      const text = group.querySelector("text");
+      return { price: Number(text?.textContent), y: Number(line?.getAttribute("y1")) };
+    }).filter((point) => Number.isFinite(point.price) && Number.isFinite(point.y));
+    if (levels.length === 0 || axis.length < 2) return;
+
+    const highest = axis.reduce((best, point) => point.price > best.price ? point : best);
+    const lowest = axis.reduce((best, point) => point.price < best.price ? point : best);
+    if (highest.price === lowest.price) return;
+    const group = addSvg("g", { "data-entry-guides": "", "pointer-events": "none" });
+    levels.forEach((level) => {
+      const y = highest.y + ((highest.price - level.value) / (highest.price - lowest.price)) * (lowest.y - highest.y);
+      if (y < 30 || y > 430) return;
+      group.append(
+        addSvg("line", { x1: 62, x2: 876, y1: y, y2: y, stroke: level.color, "stroke-width": 1.4, "stroke-dasharray": "7 6", opacity: 0.86 }),
+        addSvg("rect", { x: 69, y: y - 13, width: 92, height: 21, rx: 10.5, fill: level.color, opacity: 0.94 }),
+        addSvg("text", { x: 79, y: y + 1.5, fill: "#fff", "font-size": 10, "font-weight": 900 }, `${level.key} $${level.value.toFixed(2)}`),
+      );
+    });
+    chart.append(group);
+  };
+
+  const setupTodayReason = () => {
+    const board = [...document.querySelectorAll("button")].find((button) => button.textContent.includes("SIGNAL BOARD · M7 & MARKET"));
+    if (!board) return;
+    const cards = [...document.querySelectorAll(".market-compact-card")];
+    const card = cards.find((item) => [...item.querySelectorAll("strong,div")].some((node) => /^[A-Z.]{1,6}$/.test(node.textContent.trim()) && board.textContent.includes(node.textContent.trim())));
+    if (!card) return;
+    const status = card.querySelector("[data-signal-status]")?.textContent?.trim();
+    const reason = card.querySelector("[data-signal-reason-text]")?.textContent?.replace(/^\s*·\s*/, "").trim();
+    if (!status || !reason) return;
+    let note = board.querySelector("[data-today-reason]");
+    if (!note) {
+      note = document.createElement("span");
+      note.dataset.todayReason = "";
+      note.style.cssText = "display:block;margin-top:4px;color:#94a3b8;font-size:10px;font-weight:800";
+      board.append(note);
+    }
+    note.textContent = `선정 포인트 · ${status} / ${reason}`;
+  };
+
   const enhanceDashboard = () => {
     setupMarketTape();
     setupDetailSummary();
+    setupChartGuides();
+    setupTodayReason();
   };
   setTimeout(enhanceDashboard, 2200);
   setInterval(enhanceDashboard, 15000);
