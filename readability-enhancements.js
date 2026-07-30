@@ -680,7 +680,7 @@
       try {
         const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
         if (permission !== "granted") return showToast("알림 권한이 허용되지 않았습니다.");
-        await navigator.serviceWorker.register("/sw.js");
+        await navigator.serviceWorker.register("./sw.js");
         const ready = await navigator.serviceWorker.ready;
         await ready.showNotification("NASDAQ Watchlist", {
           body: "안드로이드 알림 테스트가 정상적으로 도착했습니다.",

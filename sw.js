@@ -6,10 +6,10 @@ self.addEventListener("message", (event) => {
     body: "알림 테스트가 정상적으로 도착했습니다.",
     tag: "nasdaq-watchlist-test",
     renotify: true,
-    data: { url: "/" }
+    data: { url: "./" }
   }));
 });
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  event.waitUntil(clients.openWindow(event.notification.data?.url || "/"));
+  event.waitUntil(clients.openWindow(event.notification.data?.url || "./"));
 });
