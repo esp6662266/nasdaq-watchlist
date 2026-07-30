@@ -165,22 +165,36 @@
     const sma20 = average(closes);
     const deviation = Math.sqrt(average(closes.map((value) => (value - sma20) ** 2)));
     const bbPosition = deviation ? ((last - (sma20 - 2 * deviation)) / (4 * deviation)) * 100 : 50;
-    const volumeAverage = volumes.length ? average(volumes) : null;
+    const latestSession = recent.at(-1)?.time;
+    const marketDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const isInProgressSession = latestSession === marketDate;
+    // Compare a finished daily candle with the prior 19 completed sessions only.
+    const completedVolumes = isInProgressSession ? volumes.slice(0, -1) : volumes;
+    const volumeAverage = completedVolumes.length ? average(completedVolumes) : null;
     const volumeRatio = volumeAverage ? volumes.at(-1) / volumeAverage : null;
     const fiveDayBase = closes.at(-6);
     const fiveDayReturn = fiveDayBase ? ((last / fiveDayBase) - 1) * 100 : 0;
 
     let label = "지표 혼조";
-    if (volumeRatio != null && volumeRatio < 0.8) label = "거래량 부족";
-    else if (volumeRatio != null && volumeRatio >= 1.5) label = "거래량 증가";
-    else if (bbPosition <= 15) label = "BB 하단권";
+    if (bbPosition <= 15) label = "BB 하단권";
     else if (bbPosition >= 85) label = "BB 상단권";
     else if (last < sma20 && fiveDayReturn < 0) label = "20일선 아래";
     else if (last > sma20 && fiveDayReturn > 0) label = "20일선 위";
     else if (last < prior) label = "단기 하락";
     else if (last > prior) label = "단기 상승";
+    else if (!isInProgressSession && volumeRatio != null && volumeRatio < 0.8) label = "거래량 부족";
+    else if (!isInProgressSession && volumeRatio != null && volumeRatio >= 1.5) label = "거래량 증가";
 
-    const volumeText = volumeRatio == null ? "거래량 비교 불가" : `거래량은 20일 평균의 ${volumeRatio.toFixed(2)}배`;
+    const volumeText = volumeRatio == null
+      ? "거래량 비교 불가"
+      : isInProgressSession
+        ? `장중 거래량은 20일 평균의 ${volumeRatio.toFixed(2)}배 (진행 중)`
+        : `거래량은 20일 평균의 ${volumeRatio.toFixed(2)}배`;
     const positionText = `BB 위치 ${Math.max(0, Math.min(100, bbPosition)).toFixed(0)}%`;
     const trendText = `종가는 20일선 ${last >= sma20 ? "위" : "아래"}`;
     const momentumText = `5일 ${fiveDayReturn >= 0 ? "+" : ""}${fiveDayReturn.toFixed(1)}%`;
