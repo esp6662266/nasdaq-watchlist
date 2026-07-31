@@ -125,6 +125,10 @@
   let marketFilter = { label: "시장 확인 중", detail: "QQQ 일봉을 불러오는 중입니다.", color: "#64748b", background: "#f1f5f9" };
   let marketFilterLoaded = false;
   let marketFilterPending = false;
+  const earningsBySymbol = new Map();
+  let earningsLoaded = false;
+  let earningsPending = false;
+  let earningsAsOf = null;
 
   const getSymbol = (card) => {
     const logo = card.querySelector("img[alt$=' logo']");
@@ -269,6 +273,21 @@
     return { label: "시장 중립", detail: "QQQ 방향이 엇갈려 개별 종목의 확인 신호가 더 중요합니다.", color: "#475569", background: "#e2e8f0" };
   };
 
+  const earningsStatus = (symbol) => {
+    if (!earningsLoaded) return { label: "실적 일정 확인 중", detail: "NASDAQ 공개 캘린더를 불러오는 중입니다.", color: "#64748b", background: "#f1f5f9" };
+    const event = earningsBySymbol.get(providerSymbol(symbol));
+    if (!event) return { label: "실적 · 7일 내 일정 없음", detail: "NASDAQ 공개 캘린더의 향후 7일 기준입니다.", color: "#64748b", background: "#f8fafc" };
+    const days = earningsAsOf ? Math.max(0, Math.round((Date.parse(`${event.date}T12:00:00Z`) - Date.parse(`${earningsAsOf}T12:00:00Z`)) / 86400000)) : null;
+    const time = event.time === "time-pre-market" ? "장전" : event.time === "time-after-market" ? "장후" : "시간 미정";
+    const closeRisk = Number.isFinite(days) && days <= 2;
+    return {
+      label: `실적 D-${days ?? "?"} · ${time}`,
+      detail: `${event.date} ${time} 실적 발표 예정. 이벤트 전 신규 스윙 진입은 보수적으로 검토합니다.`,
+      color: closeRisk ? "#be123c" : "#9a3412",
+      background: closeRisk ? "#ffe4e6" : "#ffedd5",
+    };
+  };
+
   const removeDuplicatePrimarySignal = (card) => {
     card.querySelectorAll("[data-primary-signal]").forEach((element) => element.remove());
     card.querySelectorAll("*").forEach((element) => {
@@ -311,6 +330,7 @@
     const reason = explainSignal(rows);
     const swingPlan = makeSwingPlan(rows);
     const swingSetup = classifySwingSetup(rows);
+    const earnings = earningsStatus(symbol);
     const closes = rows.map((row) => Number(row.close)).filter(Number.isFinite);
     const first = closes.at(-1), previous = closes.at(-2);
     const recent = closes.slice(-20);
@@ -328,7 +348,7 @@
     insight.dataset.chartKey = symbol.replace(/[^A-Z0-9_-]/g, "_");
     insight.setAttribute("aria-label", `${symbol} 신호 점수 ${score}점, ${style.label}, 이유 ${reason.label}. ${reason.detail}. 최근 20일 가격 흐름`);
     insight.style.cssText = "display:flex;flex-direction:column;gap:5px;margin-top:8px;padding:7px 54px 7px 7px;border-radius:8px;background:rgba(248,250,252,.9);min-height:76px";
-    const planMarkup = swingPlan ? `<div data-swing-plan style="margin-top:2px;border-top:1px solid #e2e8f0;padding-top:6px"><div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:4px"><span style="font-size:8px;font-weight:950;letter-spacing:.05em;color:#64748b">스윙 계획 · 참고</span><span data-swing-setup style="overflow:hidden;text-overflow:ellipsis;border-radius:999px;padding:3px 5px;background:${swingSetup.background};color:${swingSetup.color};font-size:8px;font-weight:950;white-space:nowrap" title="${swingSetup.detail}">${swingSetup.label}</span></div><span data-market-filter style="display:block;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${marketFilter.background};color:${marketFilter.color};font-size:8px;font-weight:900;white-space:nowrap" title="${marketFilter.detail}">QQQ 필터 · ${marketFilter.label}</span><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px"><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">진입 확인</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#1d4ed8;white-space:nowrap">${swingPlan.entry}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손절 기준</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#be123c;white-space:nowrap">${swingPlan.stop}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">1차 목표</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#0369a1;white-space:nowrap">${swingPlan.target}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손익비</small><strong style="display:block;font-size:9px;color:#0369a1">${swingPlan.ratio}</strong></span></div></div>` : "";
+    const planMarkup = swingPlan ? `<div data-swing-plan style="margin-top:2px;border-top:1px solid #e2e8f0;padding-top:6px"><div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:4px"><span style="font-size:8px;font-weight:950;letter-spacing:.05em;color:#64748b">스윙 계획 · 참고</span><span data-swing-setup style="overflow:hidden;text-overflow:ellipsis;border-radius:999px;padding:3px 5px;background:${swingSetup.background};color:${swingSetup.color};font-size:8px;font-weight:950;white-space:nowrap" title="${swingSetup.detail}">${swingSetup.label}</span></div><span data-market-filter style="display:block;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${marketFilter.background};color:${marketFilter.color};font-size:8px;font-weight:900;white-space:nowrap" title="${marketFilter.detail}">QQQ 필터 · ${marketFilter.label}</span><span data-earnings-alert style="display:block;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${earnings.background};color:${earnings.color};font-size:8px;font-weight:900;white-space:nowrap" title="${earnings.detail}">${earnings.label}</span><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px"><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">진입 확인</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#1d4ed8;white-space:nowrap">${swingPlan.entry}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손절 기준</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#be123c;white-space:nowrap">${swingPlan.stop}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">1차 목표</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#0369a1;white-space:nowrap">${swingPlan.target}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손익비</small><strong style="display:block;font-size:9px;color:#0369a1">${swingPlan.ratio}</strong></span></div></div>` : "";
     insight.innerHTML = `<span style="display:flex;align-items:center;gap:7px;min-width:0"><span style="display:flex;min-width:57px;flex-direction:column;line-height:1.05"><span style="font-size:9px;font-weight:900;letter-spacing:.04em;color:#64748b">신호 점수</span><strong style="font-size:16px;font-weight:950;color:${style.color}">${score}<small style="font-size:9px;margin-left:1px">/100</small></strong></span><span data-signal-reason style="font-size:9px;font-weight:900;color:${style.color};background:${style.background};padding:3px 5px;border-radius:999px;white-space:nowrap"><span data-signal-status>${style.label}</span><span data-signal-reason-text> · ${reason.label}</span></span></span><svg viewBox="0 0 100 32" preserveAspectRatio="none" role="img" aria-label="최근 20일 미니 차트" style="width:100%;height:36px;overflow:visible"><polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg><span style="font-size:9px;font-weight:800;color:#64748b;white-space:nowrap">${distanceText} · ${returnText}</span>${planMarkup}`;
     const reasonLabel = insight.querySelector("[data-signal-reason]");
     reasonLabel.setAttribute("title", reason.detail);
@@ -377,10 +397,28 @@
     }
   };
 
+  const fetchEarnings = async (symbols) => {
+    if (earningsLoaded || earningsPending || !symbols.length) return;
+    earningsPending = true;
+    try {
+      const response = await fetch(`/.netlify/functions/earnings?days=7&symbols=${encodeURIComponent(symbols.map(providerSymbol).join(","))}`);
+      const payload = await response.json();
+      if (!payload.ok) return;
+      Object.entries(payload.events || {}).forEach(([symbol, event]) => earningsBySymbol.set(symbol, event));
+      earningsAsOf = payload.asOf || null;
+      earningsLoaded = true;
+    } catch (_) {
+      // A missing event feed must never prevent price and trend data from rendering.
+    } finally {
+      earningsPending = false;
+    }
+  };
+
   const enhance = async () => {
     const cards = [...document.querySelectorAll("button.market-compact-card")];
     if (!cards.length || !window.localSignalScore) return;
     await fetchMarketFilter();
+    await fetchEarnings(cards.map(getSymbol).filter(Boolean));
     const required = [];
     for (const card of cards) {
       const symbol = getSymbol(card);
