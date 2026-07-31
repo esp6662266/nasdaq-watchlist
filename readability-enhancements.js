@@ -148,10 +148,10 @@
   };
 
   const scoreStyle = (score) => {
-    if (score >= 75) return { label: "강한 추세", color: "#1d4ed8", background: "#dbeafe" };
-    if (score >= 60) return { label: "관심", color: "#0369a1", background: "#e0f2fe" };
-    if (score >= 40) return { label: "관망", color: "#475569", background: "#e2e8f0" };
-    return { label: "주의", color: "#be123c", background: "#ffe4e6" };
+    if (score >= 75) return { label: "추세 우세", color: "#1d4ed8", background: "#dbeafe" };
+    if (score >= 60) return { label: "진입 검토", color: "#0369a1", background: "#e0f2fe" };
+    if (score >= 40) return { label: "대기", color: "#475569", background: "#e2e8f0" };
+    return { label: "관찰 필요", color: "#be123c", background: "#ffe4e6" };
   };
 
   const explainSignal = (rows) => {
