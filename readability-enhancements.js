@@ -414,6 +414,33 @@
     }
   };
 
+  const renderTodaySwingBoard = (cards) => {
+    const existing = document.querySelector("[data-today-swing-board]");
+    const entries = cards.map((card) => {
+      const symbol = getSymbol(card);
+      const rows = symbol && historyBySymbol.get(symbol);
+      if (!symbol || !rows) return null;
+      const setup = classifySwingSetup(rows);
+      const score = window.localSignalScore?.(rows) ?? 0;
+      const earnings = earningsStatus(symbol);
+      return { symbol, setup, score, earnings };
+    }).filter(Boolean);
+    const groups = ["추세 눌림목", "하단 반등", "박스 돌파"].map((label) => ({
+      label,
+      items: entries.filter((entry) => entry.setup.label === label).sort((a, b) => b.score - a.score).slice(0, 3),
+    })).filter((group) => group.items.length);
+    if (!groups.length) {
+      existing?.remove();
+      return;
+    }
+    const board = existing || document.createElement("section");
+    board.dataset.todaySwingBoard = "";
+    board.style.cssText = "grid-column:1/-1;margin:0 0 12px;border:1px solid #bfdbfe;border-radius:16px;background:linear-gradient(135deg,#eff6ff,#fff);padding:12px;box-shadow:0 8px 22px rgba(15,23,42,.06)";
+    board.innerHTML = `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:9px"><div><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#1d4ed8">TODAY'S SWING CANDIDATES</div><div style="margin-top:2px;font-size:11px;font-weight:800;color:#475569">전체 50개 중 셋업이 확인된 종목만 요약 · 매매 지시 아님</div></div><span style="border-radius:999px;padding:4px 7px;background:${marketFilter.background};color:${marketFilter.color};font-size:10px;font-weight:950;white-space:nowrap">QQQ ${marketFilter.label}</span></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:7px">${groups.map((group) => `<div style="border-radius:10px;background:#fff;padding:8px"><div style="margin-bottom:6px;font-size:10px;font-weight:950;color:#334155">${group.label}</div>${group.items.map((entry) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:5px;padding:4px 0;border-top:1px solid #f1f5f9"><span style="font-size:11px;font-weight:950;color:#0f172a">${entry.symbol}</span><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:850;color:${entry.earnings.color};white-space:nowrap" title="${entry.earnings.detail}">${entry.earnings.label}</span><span style="font-size:9px;font-weight:900;color:#2563eb">${entry.score}점</span></div>`).join("")}</div>`).join("")}</div>`;
+    const cardContainer = cards[0]?.parentElement;
+    if (!existing && cardContainer) cardContainer.before(board);
+  };
+
   const enhance = async () => {
     const cards = [...document.querySelectorAll("button.market-compact-card")];
     if (!cards.length || !window.localSignalScore) return;
@@ -433,6 +460,7 @@
       const rows = symbol && historyBySymbol.get(symbol);
       if (rows) renderCard(card, symbol, rows);
     }
+    renderTodaySwingBoard(cards);
   };
 
   setTimeout(enhance, 1800);
