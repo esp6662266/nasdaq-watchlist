@@ -201,6 +201,28 @@
     return { label, detail: `${volumeText} · ${positionText} · ${trendText} · ${momentumText}` };
   };
 
+  // Reference-only swing levels derived from the latest completed daily candles.
+  // They are planning levels, not an instruction to buy or sell.
+  const makeSwingPlan = (rows) => {
+    const recent = rows.slice(-12).filter((row) => Number.isFinite(Number(row.close)));
+    if (recent.length < 7) return null;
+    const previous = recent.at(-2);
+    const entry = Number.isFinite(Number(previous.high)) ? Number(previous.high) : Number(previous.close);
+    const lows = recent.slice(-6).map((row) => Number(row.low ?? row.close)).filter(Number.isFinite);
+    const stop = Math.min(...lows);
+    const risk = entry - stop;
+    if (!Number.isFinite(entry) || !Number.isFinite(stop) || risk <= 0) return null;
+    const target = entry + risk * 2;
+    const price = (value) => `$${Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+    return {
+      entry: price(entry),
+      stop: price(stop),
+      target: price(target),
+      ratio: "2.0R",
+      detail: `전일 고점 ${price(entry)} 돌파 확인 · 최근 6일 저점 ${price(stop)} 이탈 시 계획 무효`,
+    };
+  };
+
   const removeDuplicatePrimarySignal = (card) => {
     card.querySelectorAll("[data-primary-signal]").forEach((element) => element.remove());
     card.querySelectorAll("*").forEach((element) => {
@@ -241,6 +263,7 @@
     renderSwingHeaderStatus(card);
     const style = scoreStyle(score);
     const reason = explainSignal(rows);
+    const swingPlan = makeSwingPlan(rows);
     const closes = rows.map((row) => Number(row.close)).filter(Number.isFinite);
     const first = closes.at(-1), previous = closes.at(-2);
     const recent = closes.slice(-20);
@@ -258,11 +281,13 @@
     insight.dataset.chartKey = symbol.replace(/[^A-Z0-9_-]/g, "_");
     insight.setAttribute("aria-label", `${symbol} 신호 점수 ${score}점, ${style.label}, 이유 ${reason.label}. ${reason.detail}. 최근 20일 가격 흐름`);
     insight.style.cssText = "display:flex;flex-direction:column;gap:5px;margin-top:8px;padding:7px 54px 7px 7px;border-radius:8px;background:rgba(248,250,252,.9);min-height:76px";
-    insight.innerHTML = `<span style="display:flex;align-items:center;gap:7px;min-width:0"><span style="display:flex;min-width:57px;flex-direction:column;line-height:1.05"><span style="font-size:9px;font-weight:900;letter-spacing:.04em;color:#64748b">신호 점수</span><strong style="font-size:16px;font-weight:950;color:${style.color}">${score}<small style="font-size:9px;margin-left:1px">/100</small></strong></span><span data-signal-reason style="font-size:9px;font-weight:900;color:${style.color};background:${style.background};padding:3px 5px;border-radius:999px;white-space:nowrap"><span data-signal-status>${style.label}</span><span data-signal-reason-text> · ${reason.label}</span></span></span><svg viewBox="0 0 100 32" preserveAspectRatio="none" role="img" aria-label="최근 20일 미니 차트" style="width:100%;height:36px;overflow:visible"><polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg><span style="font-size:9px;font-weight:800;color:#64748b;white-space:nowrap">${distanceText} · ${returnText}</span>`;
+    const planMarkup = swingPlan ? `<div data-swing-plan style="margin-top:2px;border-top:1px solid #e2e8f0;padding-top:6px"><div style="margin-bottom:4px;font-size:8px;font-weight:950;letter-spacing:.05em;color:#64748b">스윙 계획 · 참고</div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px"><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">진입 확인</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#1d4ed8;white-space:nowrap">${swingPlan.entry}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손절 기준</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#be123c;white-space:nowrap">${swingPlan.stop}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">1차 목표</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#0369a1;white-space:nowrap">${swingPlan.target}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손익비</small><strong style="display:block;font-size:9px;color:#0369a1">${swingPlan.ratio}</strong></span></div></div>` : "";
+    insight.innerHTML = `<span style="display:flex;align-items:center;gap:7px;min-width:0"><span style="display:flex;min-width:57px;flex-direction:column;line-height:1.05"><span style="font-size:9px;font-weight:900;letter-spacing:.04em;color:#64748b">신호 점수</span><strong style="font-size:16px;font-weight:950;color:${style.color}">${score}<small style="font-size:9px;margin-left:1px">/100</small></strong></span><span data-signal-reason style="font-size:9px;font-weight:900;color:${style.color};background:${style.background};padding:3px 5px;border-radius:999px;white-space:nowrap"><span data-signal-status>${style.label}</span><span data-signal-reason-text> · ${reason.label}</span></span></span><svg viewBox="0 0 100 32" preserveAspectRatio="none" role="img" aria-label="최근 20일 미니 차트" style="width:100%;height:36px;overflow:visible"><polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg><span style="font-size:9px;font-weight:800;color:#64748b;white-space:nowrap">${distanceText} · ${returnText}</span>${planMarkup}`;
     const reasonLabel = insight.querySelector("[data-signal-reason]");
     reasonLabel.setAttribute("title", reason.detail);
     reasonLabel.setAttribute("aria-label", `${style.label}. 이유: ${reason.label}. ${reason.detail}`);
     reasonLabel.dataset.reasonDetail = reason.detail;
+    if (swingPlan) insight.querySelector("[data-swing-plan]")?.setAttribute("title", swingPlan.detail);
     const metrics = card.querySelector(":scope > .mt-2.grid.grid-cols-3");
     if (metrics) metrics.before(insight); else card.append(insight);
   };
