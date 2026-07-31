@@ -444,6 +444,7 @@
   };
 
   const notifiedAlerts = new Set();
+  let swingSummaryOpen = false;
   const notificationsArmed = () => window.localStorage.getItem("nasdaq-watchlist:swing-notifications") === "enabled";
 
   const notifySwingAlerts = (alerts) => {
@@ -513,6 +514,35 @@
     else if (!existing && cardContainer) cardContainer.before(board);
   };
 
+  const applySwingSummaryVisibility = () => {
+    document.querySelectorAll("[data-today-swing-board], [data-swing-alert-board]").forEach((board) => {
+      board.style.display = swingSummaryOpen ? "block" : "none";
+    });
+    const toggle = document.querySelector("[data-swing-summary-toggle]");
+    if (toggle) {
+      toggle.textContent = swingSummaryOpen ? "스윙 요약 닫기" : "스윙 요약";
+      toggle.setAttribute("aria-expanded", String(swingSummaryOpen));
+      toggle.style.background = swingSummaryOpen ? "#1d4ed8" : "#eff6ff";
+      toggle.style.color = swingSummaryOpen ? "#fff" : "#1d4ed8";
+      toggle.style.borderColor = swingSummaryOpen ? "#1d4ed8" : "#bfdbfe";
+    }
+  };
+
+  const installSwingSummaryToggle = () => {
+    const todayButton = [...document.querySelectorAll("button")].find((button) => button.textContent.trim().startsWith("오늘의 5종목"));
+    if (!todayButton || document.querySelector("[data-swing-summary-toggle]")) return;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.dataset.swingSummaryToggle = "";
+    toggle.style.cssText = "margin-left:8px;border:1px solid #bfdbfe;border-radius:999px;padding:7px 10px;font-size:11px;font-weight:950;line-height:1;white-space:nowrap";
+    toggle.addEventListener("click", () => {
+      swingSummaryOpen = !swingSummaryOpen;
+      applySwingSummaryVisibility();
+    });
+    todayButton.after(toggle);
+    applySwingSummaryVisibility();
+  };
+
   const enhance = async () => {
     const compactCards = [...document.querySelectorAll("button.market-compact-card")];
     const actionCards = [...document.querySelectorAll("button.market-action-card")];
@@ -536,6 +566,8 @@
     }
     renderTodaySwingBoard(summaryCards);
     renderSwingAlerts(summaryCards);
+    installSwingSummaryToggle();
+    applySwingSummaryVisibility();
   };
 
   setTimeout(enhance, 1800);
