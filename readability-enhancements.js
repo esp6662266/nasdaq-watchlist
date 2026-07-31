@@ -572,6 +572,10 @@
 
   setTimeout(enhance, 1800);
   setInterval(enhance, 30000);
+  setInterval(() => {
+    installSwingSummaryToggle();
+    applySwingSummaryVisibility();
+  }, 1200);
 })();
 
 /* Keep the detailed board controls, without a duplicate quick-filter row above them. */
