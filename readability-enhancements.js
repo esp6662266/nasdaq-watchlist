@@ -208,6 +208,29 @@
     });
   };
 
+  // Make the swing state visible where the original one-word signal was shown.
+  // The raw signal remains available in a data attribute for later scoring rules.
+  const renderSwingHeaderStatus = (card) => {
+    const states = {
+      "매수": { label: "진입 후보", detail: "하단·반등 조건을 추가 확인", color: "#1d4ed8", background: "#dbeafe" },
+      "관망": { label: "대기", detail: "추세 또는 반등 확인 신호 부족", color: "#475569", background: "#e2e8f0" },
+      "추격": { label: "추격 금지", detail: "가격이 확장된 구간 — 눌림 대기", color: "#be123c", background: "#ffe4e6" },
+      "축소": { label: "익절/축소 검토", detail: "상단·과열 구간 — 신규 진입 보류", color: "#be123c", background: "#ffe4e6" },
+    };
+    const header = card.firstElementChild;
+    const leftGroup = header?.firstElementChild;
+    const badge = [...(leftGroup?.children || [])].find((element) => states[element.dataset.rawSignal || element.textContent.trim()]);
+    if (!badge) return;
+    const rawSignal = badge.dataset.rawSignal || badge.textContent.trim();
+    const state = states[rawSignal];
+    badge.dataset.rawSignal = rawSignal;
+    badge.dataset.swingHeaderStatus = "";
+    badge.textContent = state.label;
+    badge.title = state.detail;
+    badge.setAttribute("aria-label", `${state.label}. ${state.detail}`);
+    badge.style.cssText = `border-radius:999px;padding:3px 7px;background:${state.background};color:${state.color};font-size:9px;font-weight:900;line-height:1.2;white-space:nowrap`;
+  };
+
   const renderCard = (card, symbol, rows) => {
     const existing = card.querySelector("[data-compact-insight]");
     if (existing) existing.remove();
@@ -215,6 +238,7 @@
     const points = makePoints(rows);
     if (score == null || !points) return;
     removeDuplicatePrimarySignal(card);
+    renderSwingHeaderStatus(card);
     const style = scoreStyle(score);
     const reason = explainSignal(rows);
     const closes = rows.map((row) => Number(row.close)).filter(Number.isFinite);
