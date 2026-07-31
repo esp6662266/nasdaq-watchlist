@@ -416,15 +416,17 @@
 
   const renderTodaySwingBoard = (cards) => {
     const existing = document.querySelector("[data-today-swing-board]");
-    const entries = cards.map((card) => {
+    const entryBySymbol = new Map();
+    cards.forEach((card) => {
       const symbol = getSymbol(card);
       const rows = symbol && historyBySymbol.get(symbol);
-      if (!symbol || !rows) return null;
+      if (!symbol || !rows || entryBySymbol.has(symbol)) return;
       const setup = classifySwingSetup(rows);
       const score = window.localSignalScore?.(rows) ?? 0;
       const earnings = earningsStatus(symbol);
-      return { symbol, setup, score, earnings };
-    }).filter(Boolean);
+      entryBySymbol.set(symbol, { symbol, setup, score, earnings });
+    });
+    const entries = [...entryBySymbol.values()];
     const groups = ["추세 눌림목", "하단 반등", "박스 돌파"].map((label) => ({
       label,
       items: entries.filter((entry) => entry.setup.label === label).sort((a, b) => b.score - a.score).slice(0, 3),
@@ -442,12 +444,14 @@
   };
 
   const enhance = async () => {
-    const cards = [...document.querySelectorAll("button.market-compact-card")];
-    if (!cards.length || !window.localSignalScore) return;
+    const compactCards = [...document.querySelectorAll("button.market-compact-card")];
+    const actionCards = [...document.querySelectorAll("button.market-action-card")];
+    const summaryCards = compactCards.length ? compactCards : actionCards;
+    if (!summaryCards.length || !window.localSignalScore) return;
     await fetchMarketFilter();
-    await fetchEarnings(cards.map(getSymbol).filter(Boolean));
+    await fetchEarnings(summaryCards.map(getSymbol).filter(Boolean));
     const required = [];
-    for (const card of cards) {
+    for (const card of summaryCards) {
       const symbol = getSymbol(card);
       if (!symbol) continue;
       const rows = historyBySymbol.get(symbol);
@@ -455,12 +459,12 @@
       else if (!pendingSymbols.has(symbol)) required.push(symbol);
     }
     for (let start = 0; start < required.length; start += 12) await fetchHistory(required.slice(start, start + 12));
-    for (const card of cards) {
+    for (const card of compactCards) {
       const symbol = getSymbol(card);
       const rows = symbol && historyBySymbol.get(symbol);
       if (rows) renderCard(card, symbol, rows);
     }
-    renderTodaySwingBoard(cards);
+    renderTodaySwingBoard(summaryCards);
   };
 
   setTimeout(enhance, 1800);
