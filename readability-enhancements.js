@@ -444,9 +444,10 @@
   };
 
   const notifiedAlerts = new Set();
+  const notificationsArmed = () => window.localStorage.getItem("nasdaq-watchlist:swing-notifications") === "enabled";
 
   const notifySwingAlerts = (alerts) => {
-    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    if (!("Notification" in window) || Notification.permission !== "granted" || !notificationsArmed()) return;
     alerts.forEach((alert) => {
       if (notifiedAlerts.has(alert.key)) return;
       notifiedAlerts.add(alert.key);
@@ -488,7 +489,7 @@
     const board = existing || document.createElement("section");
     board.dataset.swingAlertBoard = "";
     board.style.cssText = "grid-column:1/-1;margin:0 0 10px;border:1px solid #fde68a;border-radius:16px;background:#fffbeb;padding:11px";
-    const notificationEnabled = "Notification" in window && Notification.permission === "granted";
+    const notificationEnabled = "Notification" in window && Notification.permission === "granted" && notificationsArmed();
     board.innerHTML = `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:${alerts.length ? "8px" : "0"}"><div><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#92400e">SWING ALERTS</div><div style="margin-top:2px;font-size:10px;font-weight:800;color:#78716c">조건 충족 알림 · 매매 지시 아님</div></div><button type="button" data-enable-swing-notifications style="border:1px solid #fcd34d;border-radius:999px;background:#fff;padding:5px 8px;color:#92400e;font-size:10px;font-weight:950;white-space:nowrap">${notificationEnabled ? "브라우저 알림 사용 중" : "브라우저 알림 켜기"}</button></div>${alerts.length ? `<div style="display:grid;gap:5px">${alerts.map((alert) => `<div style="display:flex;align-items:center;gap:6px;border-radius:8px;background:#fff;padding:6px"><strong style="min-width:42px;color:#0f172a;font-size:10px">${alert.symbol}</strong><span style="font-size:10px;font-weight:950;color:${alert.color}">${alert.type}</span><span style="overflow:hidden;text-overflow:ellipsis;color:#64748b;font-size:9px;white-space:nowrap">${alert.detail}</span></div>`).join("")}</div>` : `<div style="color:#78716c;font-size:10px;font-weight:800">현재 새로 충족된 조건이 없습니다.</div>`}`;
     const enableButton = board.querySelector("[data-enable-swing-notifications]");
     enableButton?.addEventListener("click", async () => {
@@ -497,8 +498,13 @@
         return;
       }
       const permission = await Notification.requestPermission();
-      enableButton.textContent = permission === "granted" ? "브라우저 알림 사용 중" : "브라우저 알림 미허용";
-      if (permission === "granted") notifySwingAlerts(alerts);
+      if (permission === "granted") {
+        window.localStorage.setItem("nasdaq-watchlist:swing-notifications", "enabled");
+        enableButton.textContent = "브라우저 알림 사용 중";
+        notifySwingAlerts(alerts);
+      } else {
+        enableButton.textContent = "브라우저 알림 미허용";
+      }
     }, { once: true });
     notifySwingAlerts(alerts);
     const cardContainer = cards[0]?.parentElement;
