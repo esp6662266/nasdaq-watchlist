@@ -216,14 +216,27 @@
     const stop = Math.min(...lows);
     const risk = entry - stop;
     if (!Number.isFinite(entry) || !Number.isFinite(stop) || risk <= 0) return null;
-    const target = entry + risk * 2;
+    const resistanceRows = rows.slice(-21, -1).filter((row) => Number.isFinite(Number(row.close)));
+    const resistanceHigh = Math.max(...resistanceRows.map((row) => Number(row.high ?? row.close)).filter(Number.isFinite));
+    const resistanceCloses = resistanceRows.slice(-20).map((row) => Number(row.close)).filter(Number.isFinite);
+    const resistanceAverage = resistanceCloses.length ? average(resistanceCloses) : null;
+    const resistanceDeviation = resistanceAverage == null ? null : Math.sqrt(average(resistanceCloses.map((value) => (value - resistanceAverage) ** 2)));
+    const upperBand = resistanceDeviation == null ? null : resistanceAverage + resistanceDeviation * 2;
+    const targets = [
+      { value: resistanceHigh, source: "20일 고점" },
+      { value: upperBand, source: "BB 상단" },
+    ].filter((candidate) => Number.isFinite(candidate.value) && candidate.value > entry * 1.002).sort((a, b) => a.value - b.value);
+    const target = targets[0] || null;
+    const ratio = target ? (target.value - entry) / risk : null;
     const price = (value) => `$${Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
     return {
       entry: price(entry),
       stop: price(stop),
-      target: price(target),
-      ratio: "2.0R",
-      detail: `전일 고점 ${price(entry)} 돌파 확인 · 최근 6일 저점 ${price(stop)} 이탈 시 계획 무효`,
+      target: target ? price(target.value) : "저항 확인 필요",
+      targetSource: target?.source || "목표 미확정",
+      ratio: ratio == null ? "-" : `${ratio.toFixed(1)}R`,
+      ratioColor: ratio != null && ratio >= 2 ? "#0369a1" : "#be123c",
+      detail: `전일 고점 ${price(entry)} 돌파 확인 · 최근 6일 저점 ${price(stop)} 이탈 시 계획 무효 · 1차 목표는 ${target?.source || "추가 저항 확인"} 기준`,
     };
   };
 
@@ -334,7 +347,7 @@
     insight.dataset.chartKey = symbol.replace(/[^A-Z0-9_-]/g, "_");
     insight.setAttribute("aria-label", `${symbol} 신호 점수 ${score}점, ${style.label}, 이유 ${reason.label}. ${reason.detail}. 최근 20일 가격 흐름`);
     insight.style.cssText = "display:flex;flex-direction:column;gap:5px;margin-top:8px;padding:7px 54px 7px 7px;border-radius:8px;background:rgba(248,250,252,.9);min-height:76px";
-    const planMarkup = swingPlan ? `<div data-swing-plan style="margin-top:2px;border-top:1px solid #e2e8f0;padding-top:6px"><div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:4px"><span style="font-size:8px;font-weight:950;letter-spacing:.05em;color:#64748b">스윙 계획 · 참고</span><span data-swing-setup style="overflow:hidden;text-overflow:ellipsis;border-radius:999px;padding:3px 5px;background:${swingSetup.background};color:${swingSetup.color};font-size:8px;font-weight:950;white-space:nowrap" title="${swingSetup.detail}">${swingSetup.label}</span></div><span data-earnings-alert style="display:block;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${earnings.background};color:${earnings.color};font-size:8px;font-weight:900;white-space:nowrap" title="${earnings.detail}">${earnings.label}</span><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px"><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">진입 확인</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#1d4ed8;white-space:nowrap">${swingPlan.entry}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손절 기준</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#be123c;white-space:nowrap">${swingPlan.stop}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">1차 목표</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#0369a1;white-space:nowrap">${swingPlan.target}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손익비</small><strong style="display:block;font-size:9px;color:#0369a1">${swingPlan.ratio}</strong></span></div></div>` : "";
+    const planMarkup = swingPlan ? `<div data-swing-plan style="margin-top:2px;border-top:1px solid #e2e8f0;padding-top:6px"><div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:4px"><span style="font-size:8px;font-weight:950;letter-spacing:.05em;color:#64748b">스윙 계획 · 참고</span><span data-swing-setup style="overflow:hidden;text-overflow:ellipsis;border-radius:999px;padding:3px 5px;background:${swingSetup.background};color:${swingSetup.color};font-size:8px;font-weight:950;white-space:nowrap" title="${swingSetup.detail}">${swingSetup.label}</span></div><span data-earnings-alert style="display:block;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${earnings.background};color:${earnings.color};font-size:8px;font-weight:900;white-space:nowrap" title="${earnings.detail}">${earnings.label}</span><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px"><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">진입 확인</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#1d4ed8;white-space:nowrap">${swingPlan.entry}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손절 기준</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#be123c;white-space:nowrap">${swingPlan.stop}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">1차 목표 · ${swingPlan.targetSource}</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#0369a1;white-space:nowrap">${swingPlan.target}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">실제 손익비</small><strong style="display:block;font-size:9px;color:${swingPlan.ratioColor}">${swingPlan.ratio}</strong></span></div></div>` : "";
     insight.innerHTML = `<span style="display:flex;align-items:center;gap:7px;min-width:0"><span style="display:flex;min-width:57px;flex-direction:column;line-height:1.05"><span style="font-size:9px;font-weight:900;letter-spacing:.04em;color:#64748b">신호 점수</span><strong style="font-size:16px;font-weight:950;color:${style.color}">${score}<small style="font-size:9px;margin-left:1px">/100</small></strong></span><span data-signal-reason style="font-size:9px;font-weight:900;color:${style.color};background:${style.background};padding:3px 5px;border-radius:999px;white-space:nowrap"><span data-signal-status>${style.label}</span><span data-signal-reason-text> · ${reason.label}</span></span></span><svg viewBox="0 0 100 32" preserveAspectRatio="none" role="img" aria-label="최근 20일 미니 차트" style="width:100%;height:36px;overflow:visible"><polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg><span style="font-size:9px;font-weight:800;color:#64748b;white-space:nowrap">${distanceText} · ${returnText}</span>${planMarkup}`;
     const reasonLabel = insight.querySelector("[data-signal-reason]");
     reasonLabel.setAttribute("title", reason.detail);
