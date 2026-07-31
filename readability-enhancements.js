@@ -443,6 +443,70 @@
     if (!existing && cardContainer) cardContainer.before(board);
   };
 
+  const notifiedAlerts = new Set();
+
+  const notifySwingAlerts = (alerts) => {
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    alerts.forEach((alert) => {
+      if (notifiedAlerts.has(alert.key)) return;
+      notifiedAlerts.add(alert.key);
+      new Notification(`스윙 알림 · ${alert.symbol}`, { body: `${alert.type} — ${alert.detail}` });
+    });
+  };
+
+  const collectSwingAlerts = (cards) => {
+    const seen = new Set();
+    const alerts = [];
+    cards.forEach((card) => {
+      const symbol = getSymbol(card);
+      const rows = symbol && historyBySymbol.get(symbol);
+      if (!symbol || !rows || seen.has(symbol)) return;
+      seen.add(symbol);
+      const recent = rows.slice(-8).filter((row) => Number.isFinite(Number(row.close)));
+      if (recent.length < 7) return;
+      const latest = recent.at(-1);
+      const previous = recent.at(-2);
+      const entry = Number(previous.high ?? previous.close);
+      const priorLows = recent.slice(-7, -1).map((row) => Number(row.low ?? row.close)).filter(Number.isFinite);
+      const stop = Math.min(...priorLows);
+      const target = entry + (entry - stop) * 2;
+      const close = Number(latest.close);
+      const earnings = earningsStatus(symbol);
+      if (Number.isFinite(stop) && close <= stop) alerts.push({ key: `${symbol}-stop`, symbol, type: "손절 기준 이탈", detail: `종가가 최근 6일 저점 기준 아래입니다.`, color: "#be123c" });
+      else if (Number.isFinite(target) && close >= target) alerts.push({ key: `${symbol}-target`, symbol, type: "1차 목표 도달", detail: `2R 참고 목표 구간에 도달했습니다.`, color: "#166534" });
+      else if (Number.isFinite(entry) && close >= entry) alerts.push({ key: `${symbol}-breakout`, symbol, type: "전일 고점 돌파", detail: `종가가 전일 고점 기준을 넘었습니다.`, color: "#1d4ed8" });
+      if (earnings.label.startsWith("실적 D-0") || earnings.label.startsWith("실적 D-1") || earnings.label.startsWith("실적 D-2")) {
+        alerts.push({ key: `${symbol}-earnings-${earnings.label}`, symbol, type: earnings.label, detail: "실적 임박 구간 — 신규 스윙 진입은 보수적으로 검토합니다.", color: "#be123c" });
+      }
+    });
+    return alerts.slice(0, 8);
+  };
+
+  const renderSwingAlerts = (cards) => {
+    const alerts = collectSwingAlerts(cards);
+    const existing = document.querySelector("[data-swing-alert-board]");
+    const board = existing || document.createElement("section");
+    board.dataset.swingAlertBoard = "";
+    board.style.cssText = "grid-column:1/-1;margin:0 0 10px;border:1px solid #fde68a;border-radius:16px;background:#fffbeb;padding:11px";
+    const notificationEnabled = "Notification" in window && Notification.permission === "granted";
+    board.innerHTML = `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:${alerts.length ? "8px" : "0"}"><div><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#92400e">SWING ALERTS</div><div style="margin-top:2px;font-size:10px;font-weight:800;color:#78716c">조건 충족 알림 · 매매 지시 아님</div></div><button type="button" data-enable-swing-notifications style="border:1px solid #fcd34d;border-radius:999px;background:#fff;padding:5px 8px;color:#92400e;font-size:10px;font-weight:950;white-space:nowrap">${notificationEnabled ? "브라우저 알림 사용 중" : "브라우저 알림 켜기"}</button></div>${alerts.length ? `<div style="display:grid;gap:5px">${alerts.map((alert) => `<div style="display:flex;align-items:center;gap:6px;border-radius:8px;background:#fff;padding:6px"><strong style="min-width:42px;color:#0f172a;font-size:10px">${alert.symbol}</strong><span style="font-size:10px;font-weight:950;color:${alert.color}">${alert.type}</span><span style="overflow:hidden;text-overflow:ellipsis;color:#64748b;font-size:9px;white-space:nowrap">${alert.detail}</span></div>`).join("")}</div>` : `<div style="color:#78716c;font-size:10px;font-weight:800">현재 새로 충족된 조건이 없습니다.</div>`}`;
+    const enableButton = board.querySelector("[data-enable-swing-notifications]");
+    enableButton?.addEventListener("click", async () => {
+      if (!("Notification" in window)) {
+        enableButton.textContent = "이 브라우저는 미지원";
+        return;
+      }
+      const permission = await Notification.requestPermission();
+      enableButton.textContent = permission === "granted" ? "브라우저 알림 사용 중" : "브라우저 알림 미허용";
+      if (permission === "granted") notifySwingAlerts(alerts);
+    }, { once: true });
+    notifySwingAlerts(alerts);
+    const cardContainer = cards[0]?.parentElement;
+    const candidatesBoard = document.querySelector("[data-today-swing-board]");
+    if (!existing && candidatesBoard) candidatesBoard.before(board);
+    else if (!existing && cardContainer) cardContainer.before(board);
+  };
+
   const enhance = async () => {
     const compactCards = [...document.querySelectorAll("button.market-compact-card")];
     const actionCards = [...document.querySelectorAll("button.market-action-card")];
@@ -465,6 +529,7 @@
       if (rows) renderCard(card, symbol, rows);
     }
     renderTodaySwingBoard(summaryCards);
+    renderSwingAlerts(summaryCards);
   };
 
   setTimeout(enhance, 1800);
