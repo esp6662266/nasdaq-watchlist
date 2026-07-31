@@ -122,9 +122,6 @@
   const historyBySymbol = new Map();
   const pendingSymbols = new Set();
   const average = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
-  let marketFilter = { label: "시장 확인 중", detail: "QQQ 일봉을 불러오는 중입니다.", color: "#64748b", background: "#f1f5f9" };
-  let marketFilterLoaded = false;
-  let marketFilterPending = false;
   const earningsBySymbol = new Map();
   let earningsLoaded = false;
   let earningsPending = false;
@@ -262,17 +259,6 @@
     return { label: "셋업 대기", detail: "현재는 진입 패턴이 뚜렷하지 않아 방향 확인이 필요합니다.", color: "#475569", background: "#e2e8f0" };
   };
 
-  const classifyMarketFilter = (rows) => {
-    const closes = rows.slice(-60).map((row) => Number(row.close)).filter(Number.isFinite);
-    if (closes.length < 22) return { label: "시장 확인 중", detail: "QQQ 일봉 데이터가 충분하지 않습니다.", color: "#64748b", background: "#f1f5f9" };
-    const last = closes.at(-1);
-    const sma20 = average(closes.slice(-20));
-    const sma50 = closes.length >= 50 ? average(closes.slice(-50)) : average(closes.slice(-30));
-    if (last >= sma20 && sma20 >= sma50) return { label: "시장 우호", detail: "QQQ가 20일선 위이며 중기 추세도 우호적입니다.", color: "#166534", background: "#dcfce7" };
-    if (last < sma20 && sma20 < sma50) return { label: "시장 방어", detail: "QQQ의 단기·중기 추세가 약해 신규 롱 스윙은 보수적으로 봅니다.", color: "#be123c", background: "#ffe4e6" };
-    return { label: "시장 중립", detail: "QQQ 방향이 엇갈려 개별 종목의 확인 신호가 더 중요합니다.", color: "#475569", background: "#e2e8f0" };
-  };
-
   const earningsStatus = (symbol) => {
     if (!earningsLoaded) return { label: "실적 일정 확인 중", detail: "NASDAQ 공개 캘린더를 불러오는 중입니다.", color: "#64748b", background: "#f1f5f9" };
     const event = earningsBySymbol.get(providerSymbol(symbol));
@@ -348,7 +334,7 @@
     insight.dataset.chartKey = symbol.replace(/[^A-Z0-9_-]/g, "_");
     insight.setAttribute("aria-label", `${symbol} 신호 점수 ${score}점, ${style.label}, 이유 ${reason.label}. ${reason.detail}. 최근 20일 가격 흐름`);
     insight.style.cssText = "display:flex;flex-direction:column;gap:5px;margin-top:8px;padding:7px 54px 7px 7px;border-radius:8px;background:rgba(248,250,252,.9);min-height:76px";
-    const planMarkup = swingPlan ? `<div data-swing-plan style="margin-top:2px;border-top:1px solid #e2e8f0;padding-top:6px"><div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:4px"><span style="font-size:8px;font-weight:950;letter-spacing:.05em;color:#64748b">스윙 계획 · 참고</span><span data-swing-setup style="overflow:hidden;text-overflow:ellipsis;border-radius:999px;padding:3px 5px;background:${swingSetup.background};color:${swingSetup.color};font-size:8px;font-weight:950;white-space:nowrap" title="${swingSetup.detail}">${swingSetup.label}</span></div><span data-market-filter style="display:block;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${marketFilter.background};color:${marketFilter.color};font-size:8px;font-weight:900;white-space:nowrap" title="${marketFilter.detail}">QQQ 필터 · ${marketFilter.label}</span><span data-earnings-alert style="display:block;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${earnings.background};color:${earnings.color};font-size:8px;font-weight:900;white-space:nowrap" title="${earnings.detail}">${earnings.label}</span><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px"><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">진입 확인</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#1d4ed8;white-space:nowrap">${swingPlan.entry}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손절 기준</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#be123c;white-space:nowrap">${swingPlan.stop}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">1차 목표</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#0369a1;white-space:nowrap">${swingPlan.target}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손익비</small><strong style="display:block;font-size:9px;color:#0369a1">${swingPlan.ratio}</strong></span></div></div>` : "";
+    const planMarkup = swingPlan ? `<div data-swing-plan style="margin-top:2px;border-top:1px solid #e2e8f0;padding-top:6px"><div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:4px"><span style="font-size:8px;font-weight:950;letter-spacing:.05em;color:#64748b">스윙 계획 · 참고</span><span data-swing-setup style="overflow:hidden;text-overflow:ellipsis;border-radius:999px;padding:3px 5px;background:${swingSetup.background};color:${swingSetup.color};font-size:8px;font-weight:950;white-space:nowrap" title="${swingSetup.detail}">${swingSetup.label}</span></div><span data-earnings-alert style="display:block;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${earnings.background};color:${earnings.color};font-size:8px;font-weight:900;white-space:nowrap" title="${earnings.detail}">${earnings.label}</span><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px"><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">진입 확인</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#1d4ed8;white-space:nowrap">${swingPlan.entry}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손절 기준</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#be123c;white-space:nowrap">${swingPlan.stop}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">1차 목표</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#0369a1;white-space:nowrap">${swingPlan.target}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손익비</small><strong style="display:block;font-size:9px;color:#0369a1">${swingPlan.ratio}</strong></span></div></div>` : "";
     insight.innerHTML = `<span style="display:flex;align-items:center;gap:7px;min-width:0"><span style="display:flex;min-width:57px;flex-direction:column;line-height:1.05"><span style="font-size:9px;font-weight:900;letter-spacing:.04em;color:#64748b">신호 점수</span><strong style="font-size:16px;font-weight:950;color:${style.color}">${score}<small style="font-size:9px;margin-left:1px">/100</small></strong></span><span data-signal-reason style="font-size:9px;font-weight:900;color:${style.color};background:${style.background};padding:3px 5px;border-radius:999px;white-space:nowrap"><span data-signal-status>${style.label}</span><span data-signal-reason-text> · ${reason.label}</span></span></span><svg viewBox="0 0 100 32" preserveAspectRatio="none" role="img" aria-label="최근 20일 미니 차트" style="width:100%;height:36px;overflow:visible"><polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg><span style="font-size:9px;font-weight:800;color:#64748b;white-space:nowrap">${distanceText} · ${returnText}</span>${planMarkup}`;
     const reasonLabel = insight.querySelector("[data-signal-reason]");
     reasonLabel.setAttribute("title", reason.detail);
@@ -376,24 +362,6 @@
       // Cards remain readable if the optional history request is unavailable.
     } finally {
       symbols.forEach((symbol) => pendingSymbols.delete(symbol));
-    }
-  };
-
-  const fetchMarketFilter = async () => {
-    if (marketFilterLoaded || marketFilterPending) return;
-    marketFilterPending = true;
-    try {
-      const response = await fetch("/api/history?symbols=QQQ");
-      const payload = await response.json();
-      const rows = payload.history?.QQQ;
-      if (payload.ok && Array.isArray(rows)) {
-        marketFilter = classifyMarketFilter(rows);
-        marketFilterLoaded = true;
-      }
-    } catch (_) {
-      marketFilter = { label: "시장 확인 불가", detail: "QQQ 데이터를 불러오지 못해 개별 종목 판단만 표시합니다.", color: "#64748b", background: "#f1f5f9" };
-    } finally {
-      marketFilterPending = false;
     }
   };
 
@@ -438,7 +406,7 @@
     const board = existing || document.createElement("section");
     board.dataset.todaySwingBoard = "";
     board.style.cssText = "grid-column:1/-1;margin:0 0 12px;border:1px solid #bfdbfe;border-radius:16px;background:linear-gradient(135deg,#eff6ff,#fff);padding:12px;box-shadow:0 8px 22px rgba(15,23,42,.06)";
-    board.innerHTML = `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:9px"><div><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#1d4ed8">TODAY'S SWING CANDIDATES</div><div style="margin-top:2px;font-size:11px;font-weight:800;color:#475569">전체 50개 중 셋업이 확인된 종목만 요약 · 매매 지시 아님</div></div><span style="border-radius:999px;padding:4px 7px;background:${marketFilter.background};color:${marketFilter.color};font-size:10px;font-weight:950;white-space:nowrap">QQQ ${marketFilter.label}</span></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:7px">${groups.map((group) => `<div style="border-radius:10px;background:#fff;padding:8px"><div style="margin-bottom:6px;font-size:10px;font-weight:950;color:#334155">${group.label}</div>${group.items.map((entry) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:5px;padding:4px 0;border-top:1px solid #f1f5f9"><span style="font-size:11px;font-weight:950;color:#0f172a">${entry.symbol}</span><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:850;color:${entry.earnings.color};white-space:nowrap" title="${entry.earnings.detail}">${entry.earnings.label}</span><span style="font-size:9px;font-weight:900;color:#2563eb">${entry.score}점</span></div>`).join("")}</div>`).join("")}</div>`;
+    board.innerHTML = `<div style="margin-bottom:9px"><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#1d4ed8">TODAY'S SWING CANDIDATES</div><div style="margin-top:2px;font-size:11px;font-weight:800;color:#475569">전체 50개 중 셋업이 확인된 종목만 요약 · 매매 지시 아님</div></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:7px">${groups.map((group) => `<div style="border-radius:10px;background:#fff;padding:8px"><div style="margin-bottom:6px;font-size:10px;font-weight:950;color:#334155">${group.label}</div>${group.items.map((entry) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:5px;padding:4px 0;border-top:1px solid #f1f5f9"><span style="font-size:11px;font-weight:950;color:#0f172a">${entry.symbol}</span><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:850;color:${entry.earnings.color};white-space:nowrap" title="${entry.earnings.detail}">${entry.earnings.label}</span><span style="font-size:9px;font-weight:900;color:#2563eb">${entry.score}점</span></div>`).join("")}</div>`).join("")}</div>`;
     const cardContainer = cards[0]?.parentElement;
     if (!existing && cardContainer) cardContainer.before(board);
   };
@@ -548,7 +516,6 @@
     const actionCards = [...document.querySelectorAll("button.market-action-card")];
     const summaryCards = compactCards.length ? compactCards : actionCards;
     if (!summaryCards.length || !window.localSignalScore) return;
-    await fetchMarketFilter();
     await fetchEarnings(summaryCards.map(getSymbol).filter(Boolean));
     const required = [];
     for (const card of summaryCards) {
