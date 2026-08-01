@@ -233,7 +233,9 @@
       entry: price(entry),
       entryValue: entry,
       stop: price(stop),
+      stopValue: stop,
       target: target ? price(target.value) : "저항 확인 필요",
+      targetValue: target?.value ?? null,
       targetSource: target?.source || "목표 미확정",
       ratio: ratio == null ? "-" : `${ratio.toFixed(1)}R`,
       ratioValue: ratio,
@@ -441,7 +443,9 @@
       const setup = classifySwingSetup(rows);
       const score = window.localSignalScore?.(rows) ?? 0;
       const earnings = earningsStatus(symbol);
-      entryBySymbol.set(symbol, { symbol, setup, score, earnings });
+      const swingPlan = makeSwingPlan(rows);
+      const swingComment = swingPlan && buildSwingComment(swingPlan, setup, earnings);
+      entryBySymbol.set(symbol, { symbol, setup, score, earnings, swingPlan, swingComment });
     });
     const entries = [...entryBySymbol.values()];
     const groups = ["추세 눌림목", "하단 반등", "박스 돌파"].map((label) => ({
@@ -455,7 +459,7 @@
     const board = existing || document.createElement("section");
     board.dataset.todaySwingBoard = "";
     board.style.cssText = "grid-column:1/-1;margin:0 0 12px;border:1px solid #bfdbfe;border-radius:16px;background:linear-gradient(135deg,#eff6ff,#fff);padding:12px;box-shadow:0 8px 22px rgba(15,23,42,.06)";
-    board.innerHTML = `<div style="margin-bottom:9px"><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#1d4ed8">TODAY'S SWING CANDIDATES</div><div style="margin-top:2px;font-size:11px;font-weight:800;color:#475569">전체 50개 중 셋업이 확인된 종목만 요약 · 매매 지시 아님</div></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:7px">${groups.map((group) => `<div style="border-radius:10px;background:#fff;padding:8px"><div style="margin-bottom:6px;font-size:10px;font-weight:950;color:#334155">${group.label}</div>${group.items.map((entry) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:5px;padding:4px 0;border-top:1px solid #f1f5f9"><span style="font-size:11px;font-weight:950;color:#0f172a">${entry.symbol}</span><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:850;color:${entry.earnings.color};white-space:nowrap" title="${entry.earnings.detail}">${entry.earnings.label}</span><span style="font-size:9px;font-weight:900;color:#2563eb">${entry.score}점</span></div>`).join("")}</div>`).join("")}</div>`;
+    board.innerHTML = `<div style="margin-bottom:9px"><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#1d4ed8">TODAY'S SWING CANDIDATES</div><div style="margin-top:2px;font-size:11px;font-weight:800;color:#475569">전체 50개 중 셋업이 확인된 종목만 요약 · 카드와 동일한 목표·손익비 기준</div></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:7px">${groups.map((group) => `<div style="border-radius:10px;background:#fff;padding:8px"><div style="margin-bottom:6px;font-size:10px;font-weight:950;color:#334155">${group.label}</div>${group.items.map((entry) => `<div style="display:grid;gap:3px;padding:5px 0;border-top:1px solid #f1f5f9"><div style="display:flex;align-items:center;justify-content:space-between;gap:5px"><span style="font-size:11px;font-weight:950;color:#0f172a">${entry.symbol}</span><span style="font-size:9px;font-weight:900;color:${entry.swingPlan?.ratioColor || "#64748b"}">${entry.swingPlan?.ratio || "R:R 확인 중"}</span><span style="font-size:9px;font-weight:900;color:#2563eb">${entry.score}점</span></div><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:850;color:${entry.earnings.color};white-space:nowrap" title="${entry.earnings.detail}">${entry.earnings.label}</span><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:900;color:${entry.swingComment?.color || "#64748b"};white-space:nowrap" title="${entry.swingPlan?.detail || "스윙 계획 계산 중"}">${entry.swingComment ? `판단 · ${entry.swingComment.verdict}` : "판단 · 계획 확인 중"}</span></div>`).join("")}</div>`).join("")}</div>`;
     const cardContainer = cards[0]?.parentElement;
     if (!existing && cardContainer) cardContainer.before(board);
   };
@@ -481,19 +485,13 @@
       const rows = symbol && historyBySymbol.get(symbol);
       if (!symbol || !rows || seen.has(symbol)) return;
       seen.add(symbol);
-      const recent = rows.slice(-8).filter((row) => Number.isFinite(Number(row.close)));
-      if (recent.length < 7) return;
-      const latest = recent.at(-1);
-      const previous = recent.at(-2);
-      const entry = Number(previous.high ?? previous.close);
-      const priorLows = recent.slice(-7, -1).map((row) => Number(row.low ?? row.close)).filter(Number.isFinite);
-      const stop = Math.min(...priorLows);
-      const target = entry + (entry - stop) * 2;
-      const close = Number(latest.close);
+      const swingPlan = makeSwingPlan(rows);
+      if (!swingPlan) return;
+      const close = swingPlan.latestClose;
       const earnings = earningsStatus(symbol);
-      if (Number.isFinite(stop) && close <= stop) alerts.push({ key: `${symbol}-stop`, symbol, type: "손절 기준 이탈", detail: `종가가 최근 6일 저점 기준 아래입니다.`, color: "#be123c" });
-      else if (Number.isFinite(target) && close >= target) alerts.push({ key: `${symbol}-target`, symbol, type: "1차 목표 도달", detail: `2R 참고 목표 구간에 도달했습니다.`, color: "#166534" });
-      else if (Number.isFinite(entry) && close >= entry) alerts.push({ key: `${symbol}-breakout`, symbol, type: "전일 고점 돌파", detail: `종가가 전일 고점 기준을 넘었습니다.`, color: "#1d4ed8" });
+      if (Number.isFinite(swingPlan.stopValue) && close <= swingPlan.stopValue) alerts.push({ key: `${symbol}-stop`, symbol, type: "손절 기준 이탈", detail: `종가가 카드의 무효화 기준 ${swingPlan.stop} 아래입니다.`, color: "#be123c" });
+      else if (Number.isFinite(swingPlan.targetValue) && close >= swingPlan.targetValue) alerts.push({ key: `${symbol}-target-${swingPlan.targetSource}`, symbol, type: "1차 목표 도달", detail: `카드의 ${swingPlan.targetSource} 목표 ${swingPlan.target}에 도달했습니다.`, color: "#166534" });
+      else if (Number.isFinite(swingPlan.entryValue) && close >= swingPlan.entryValue) alerts.push({ key: `${symbol}-breakout`, symbol, type: "전일 고점 돌파", detail: `카드의 진입 기준 ${swingPlan.entry}을 넘었습니다.`, color: "#1d4ed8" });
       if (earnings.label.startsWith("실적 D-0") || earnings.label.startsWith("실적 D-1") || earnings.label.startsWith("실적 D-2")) {
         alerts.push({ key: `${symbol}-earnings-${earnings.label}`, symbol, type: earnings.label, detail: "실적 임박 구간 — 신규 스윙 진입은 보수적으로 검토합니다.", color: "#be123c" });
       }
