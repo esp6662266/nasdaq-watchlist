@@ -298,6 +298,11 @@
     const rewardEnough = Number.isFinite(swingPlan.ratioValue) && swingPlan.ratioValue >= 2;
     const setupValid = ["추세 눌림목", "하단 반등", "박스 돌파"].includes(swingSetup.label);
     const buyNow = entryConfirmed && rewardEnough && setupValid && !earningsSoon;
+    const tier = buyNow
+      ? { label: "규칙상 진입 조건 충족", color: "#166534", background: "#dcfce7" }
+      : setupValid && !earningsSoon
+        ? { label: "진입 대기", color: "#a16207", background: "#fef3c7" }
+        : { label: "관찰", color: "#475569", background: "#e2e8f0" };
     const reasons = buyNow
       ? [
         `전일 고점 ${swingPlan.entry} 돌파가 확인됐습니다.`,
@@ -311,9 +316,10 @@
         earningsSoon ? `${earnings.label} 일정이 임박했습니다.` : null,
       ].filter(Boolean);
     return {
-      verdict: buyNow ? "지금 사도 됩니다" : "지금 사지 마세요",
-      color: buyNow ? "#166534" : "#be123c",
-      background: buyNow ? "#dcfce7" : "#ffe4e6",
+      verdict: tier.label,
+      color: tier.color,
+      background: tier.background,
+      tier: buyNow ? "entry" : setupValid && !earningsSoon ? "waiting" : "watch",
       reasons,
     };
   };
@@ -448,9 +454,13 @@
       entryBySymbol.set(symbol, { symbol, setup, score, earnings, swingPlan, swingComment });
     });
     const entries = [...entryBySymbol.values()];
-    const groups = ["추세 눌림목", "하단 반등", "박스 돌파"].map((label) => ({
-      label,
-      items: entries.filter((entry) => entry.setup.label === label).sort((a, b) => b.score - a.score).slice(0, 3),
+    const groups = [
+      { key: "entry", label: "규칙상 진입 조건 충족", color: "#166534", description: "진입·손익비·실적 조건을 모두 통과" },
+      { key: "waiting", label: "진입 대기", color: "#a16207", description: "셋업은 있으나 추가 조건 확인 필요" },
+      { key: "watch", label: "관찰", color: "#475569", description: "셋업은 보이나 현재 신규 진입 근거 부족" },
+    ].map((group) => ({
+      ...group,
+      items: entries.filter((entry) => entry.swingComment?.tier === group.key).sort((a, b) => b.score - a.score).slice(0, 5),
     })).filter((group) => group.items.length);
     if (!groups.length) {
       existing?.remove();
@@ -459,7 +469,7 @@
     const board = existing || document.createElement("section");
     board.dataset.todaySwingBoard = "";
     board.style.cssText = "grid-column:1/-1;margin:0 0 12px;border:1px solid #bfdbfe;border-radius:16px;background:linear-gradient(135deg,#eff6ff,#fff);padding:12px;box-shadow:0 8px 22px rgba(15,23,42,.06)";
-    board.innerHTML = `<div style="margin-bottom:9px"><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#1d4ed8">TODAY'S SWING CANDIDATES</div><div style="margin-top:2px;font-size:11px;font-weight:800;color:#475569">전체 50개 중 셋업이 확인된 종목만 요약 · 카드와 동일한 목표·손익비 기준</div></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:7px">${groups.map((group) => `<div style="border-radius:10px;background:#fff;padding:8px"><div style="margin-bottom:6px;font-size:10px;font-weight:950;color:#334155">${group.label}</div>${group.items.map((entry) => `<div style="display:grid;gap:3px;padding:5px 0;border-top:1px solid #f1f5f9"><div style="display:flex;align-items:center;justify-content:space-between;gap:5px"><span style="font-size:11px;font-weight:950;color:#0f172a">${entry.symbol}</span><span style="font-size:9px;font-weight:900;color:${entry.swingPlan?.ratioColor || "#64748b"}">${entry.swingPlan?.ratio || "R:R 확인 중"}</span><span style="font-size:9px;font-weight:900;color:#2563eb">${entry.score}점</span></div><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:850;color:${entry.earnings.color};white-space:nowrap" title="${entry.earnings.detail}">${entry.earnings.label}</span><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:900;color:${entry.swingComment?.color || "#64748b"};white-space:nowrap" title="${entry.swingPlan?.detail || "스윙 계획 계산 중"}">${entry.swingComment ? `판단 · ${entry.swingComment.verdict}` : "판단 · 계획 확인 중"}</span></div>`).join("")}</div>`).join("")}</div>`;
+    board.innerHTML = `<div style="margin-bottom:9px"><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#1d4ed8">TODAY'S SWING CANDIDATES</div><div style="margin-top:2px;font-size:11px;font-weight:800;color:#475569">전체 50개 중 셋업이 확인된 종목만 요약 · 카드와 동일한 목표·손익비 기준</div></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:7px">${groups.map((group) => `<div style="border-radius:10px;background:#fff;padding:8px"><div style="margin-bottom:3px;font-size:10px;font-weight:950;color:${group.color}">${group.label}</div><div style="margin-bottom:6px;font-size:8px;font-weight:800;color:#64748b">${group.description}</div>${group.items.map((entry) => `<div style="display:grid;gap:3px;padding:5px 0;border-top:1px solid #f1f5f9"><div style="display:flex;align-items:center;justify-content:space-between;gap:5px"><span style="font-size:11px;font-weight:950;color:#0f172a">${entry.symbol}</span><span style="font-size:9px;font-weight:900;color:${entry.swingPlan?.ratioColor || "#64748b"}">${entry.swingPlan?.ratio || "R:R 확인 중"}</span><span style="font-size:9px;font-weight:900;color:#2563eb">${entry.score}점</span></div><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:850;color:#475569;white-space:nowrap">${entry.setup.label} · ${entry.earnings.label}</span><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:900;color:${entry.swingComment?.color || "#64748b"};white-space:nowrap" title="${entry.swingComment?.reasons.join(" ") || "스윙 계획 계산 중"}">${entry.swingComment ? `판단 · ${entry.swingComment.verdict}` : "판단 · 계획 확인 중"}</span></div>`).join("")}</div>`).join("")}</div>`;
     const cardContainer = cards[0]?.parentElement;
     if (!existing && cardContainer) cardContainer.before(board);
   };
