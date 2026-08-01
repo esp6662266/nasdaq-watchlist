@@ -126,6 +126,22 @@
   let earningsLoaded = false;
   let earningsPending = false;
   let earningsAsOf = null;
+  let historyAsOf = null;
+  let historyUnavailable = false;
+
+  const getSessionStatus = (rows) => {
+    const latestSession = rows.at(-1)?.time;
+    const marketDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const inProgress = latestSession === marketDate;
+    return inProgress
+      ? { inProgress: true, label: "장중 일봉 · 종가 미확정", detail: "오늘 일봉은 진행 중입니다. 종가 확정 스윙 신호로는 아직 판단하지 않습니다.", color: "#a16207", background: "#fef3c7" }
+      : { inProgress: false, label: "완료 일봉 기준", detail: "가장 최근 완료 일봉 기준으로 계산했습니다.", color: "#166534", background: "#dcfce7" };
+  };
 
   const getSymbol = (card) => {
     const logo = card.querySelector("img[alt$=' logo']");
@@ -292,12 +308,12 @@
     };
   };
 
-  const buildSwingComment = (swingPlan, swingSetup, earnings) => {
+  const buildSwingComment = (swingPlan, swingSetup, earnings, session) => {
     const earningsSoon = /^실적 D-[0-2]\b/.test(earnings.label);
     const entryConfirmed = Number.isFinite(swingPlan.latestClose) && swingPlan.latestClose >= swingPlan.entryValue;
     const rewardEnough = Number.isFinite(swingPlan.ratioValue) && swingPlan.ratioValue >= 2;
     const setupValid = ["추세 눌림목", "하단 반등", "박스 돌파"].includes(swingSetup.label);
-    const buyNow = entryConfirmed && rewardEnough && setupValid && !earningsSoon;
+    const buyNow = entryConfirmed && rewardEnough && setupValid && !earningsSoon && !session.inProgress;
     const tier = buyNow
       ? { label: "규칙상 진입 조건 충족", color: "#166534", background: "#dcfce7" }
       : setupValid && !earningsSoon
@@ -314,6 +330,7 @@
         !rewardEnough ? `실제 손익비가 ${swingPlan.ratio}로 2R 기준에 못 미칩니다.` : null,
         !setupValid ? `${swingSetup.label} 상태라 신규 진입 근거가 약합니다.` : null,
         earningsSoon ? `${earnings.label} 일정이 임박했습니다.` : null,
+        session.inProgress ? "오늘 일봉이 아직 진행 중이라 종가 확정 확인이 필요합니다." : null,
       ].filter(Boolean);
     return {
       verdict: tier.label,
@@ -367,7 +384,8 @@
     const swingPlan = makeSwingPlan(rows);
     const swingSetup = classifySwingSetup(rows);
     const earnings = earningsStatus(symbol);
-    const swingComment = swingPlan && buildSwingComment(swingPlan, swingSetup, earnings);
+    const session = getSessionStatus(rows);
+    const swingComment = swingPlan && buildSwingComment(swingPlan, swingSetup, earnings, session);
     const closes = rows.map((row) => Number(row.close)).filter(Number.isFinite);
     const first = closes.at(-1), previous = closes.at(-2);
     const recent = closes.slice(-20);
@@ -385,7 +403,7 @@
     insight.dataset.chartKey = symbol.replace(/[^A-Z0-9_-]/g, "_");
     insight.setAttribute("aria-label", `${symbol} 신호 점수 ${score}점, ${style.label}, 이유 ${reason.label}. ${reason.detail}. 최근 20일 가격 흐름`);
     insight.style.cssText = "display:flex;flex-direction:column;gap:5px;margin-top:8px;padding:7px 54px 7px 7px;border-radius:8px;background:rgba(248,250,252,.9);min-height:76px";
-    const planMarkup = swingPlan ? `<div data-swing-plan style="margin-top:2px;border-top:1px solid #e2e8f0;padding-top:6px"><div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:4px"><span style="font-size:8px;font-weight:950;letter-spacing:.05em;color:#64748b">스윙 계획 · 참고</span><span data-swing-setup style="overflow:hidden;text-overflow:ellipsis;border-radius:999px;padding:3px 5px;background:${swingSetup.background};color:${swingSetup.color};font-size:8px;font-weight:950;white-space:nowrap" title="${swingSetup.detail}">${swingSetup.label}</span></div><span data-earnings-alert style="display:block;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${earnings.background};color:${earnings.color};font-size:8px;font-weight:900;white-space:nowrap" title="${earnings.detail}">${earnings.label}</span><div data-swing-comment-wrap style="position:relative;margin-bottom:5px"><span data-swing-comment-trigger style="display:block;cursor:help;border-radius:6px;padding:5px 6px;background:${swingComment.background};color:${swingComment.color};font-size:10px;font-weight:950">판단 · ${swingComment.verdict}</span><div data-swing-comment style="display:none;position:absolute;z-index:60;left:0;right:0;top:calc(100% + 4px);border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:7px;box-shadow:0 12px 28px rgba(15,23,42,.18);font-size:9px;color:#334155"><strong style="display:block;margin-bottom:4px;color:${swingComment.color};font-size:10px">${swingComment.verdict}</strong>${swingComment.reasons.map((reason) => `<div style="margin-top:3px">• ${reason}</div>`).join("")}<div style="margin-top:5px;color:#64748b">자동 기술 규칙 기준 · 투자자문 아님</div></div></div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px"><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">진입 확인</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#1d4ed8;white-space:nowrap">${swingPlan.entry}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손절 기준</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#be123c;white-space:nowrap">${swingPlan.stop}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">1차 목표 · ${swingPlan.targetSource}</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#0369a1;white-space:nowrap">${swingPlan.target}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">실제 손익비</small><strong style="display:block;font-size:9px;color:${swingPlan.ratioColor}">${swingPlan.ratio}</strong></span></div></div>` : "";
+    const planMarkup = swingPlan ? `<div data-swing-plan style="margin-top:2px;border-top:1px solid #e2e8f0;padding-top:6px"><div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:4px"><span style="font-size:8px;font-weight:950;letter-spacing:.05em;color:#64748b">스윙 계획 · 참고</span><span data-swing-setup style="overflow:hidden;text-overflow:ellipsis;border-radius:999px;padding:3px 5px;background:${swingSetup.background};color:${swingSetup.color};font-size:8px;font-weight:950;white-space:nowrap" title="${swingSetup.detail}">${swingSetup.label}</span></div><span data-session-status style="display:block;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${session.background};color:${session.color};font-size:8px;font-weight:900;white-space:nowrap" title="${session.detail}">${session.label}</span><span data-earnings-alert style="display:block;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${earnings.background};color:${earnings.color};font-size:8px;font-weight:900;white-space:nowrap" title="${earnings.detail}">${earnings.label}</span><div data-swing-comment-wrap style="position:relative;margin-bottom:5px"><span data-swing-comment-trigger style="display:block;cursor:help;border-radius:6px;padding:5px 6px;background:${swingComment.background};color:${swingComment.color};font-size:10px;font-weight:950">판단 · ${swingComment.verdict}</span><div data-swing-comment role="tooltip" style="display:none;position:absolute;z-index:60;left:0;right:0;top:calc(100% + 4px);border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:7px;box-shadow:0 12px 28px rgba(15,23,42,.18);font-size:9px;color:#334155"><strong style="display:block;margin-bottom:4px;color:${swingComment.color};font-size:10px">${swingComment.verdict}</strong>${swingComment.reasons.map((reason) => `<div style="margin-top:3px">• ${reason}</div>`).join("")}<div style="margin-top:5px;color:#64748b">자동 기술 규칙 기준 · 투자자문 아님</div></div></div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px"><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">진입 확인</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#1d4ed8;white-space:nowrap">${swingPlan.entry}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손절 기준</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#be123c;white-space:nowrap">${swingPlan.stop}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">1차 목표 · ${swingPlan.targetSource}</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#0369a1;white-space:nowrap">${swingPlan.target}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">실제 손익비</small><strong style="display:block;font-size:9px;color:${swingPlan.ratioColor}">${swingPlan.ratio}</strong></span></div></div>` : "";
     insight.innerHTML = `<span style="display:flex;align-items:center;gap:7px;min-width:0"><span style="display:flex;min-width:57px;flex-direction:column;line-height:1.05"><span style="font-size:9px;font-weight:900;letter-spacing:.04em;color:#64748b">신호 점수</span><strong style="font-size:16px;font-weight:950;color:${style.color}">${score}<small style="font-size:9px;margin-left:1px">/100</small></strong></span><span data-signal-reason style="font-size:9px;font-weight:900;color:${style.color};background:${style.background};padding:3px 5px;border-radius:999px;white-space:nowrap"><span data-signal-status>${style.label}</span><span data-signal-reason-text> · ${reason.label}</span></span></span><svg viewBox="0 0 100 32" preserveAspectRatio="none" role="img" aria-label="최근 20일 미니 차트" style="width:100%;height:36px;overflow:visible"><polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg><span style="font-size:9px;font-weight:800;color:#64748b;white-space:nowrap">${distanceText} · ${returnText}</span>${planMarkup}`;
     const reasonLabel = insight.querySelector("[data-signal-reason]");
     reasonLabel.setAttribute("title", reason.detail);
@@ -415,8 +433,11 @@
         const rows = payload.history?.[requestedSymbols[index]] ?? payload.history?.[symbol];
         if (Array.isArray(rows)) historyBySymbol.set(symbol, rows);
       }
+      historyAsOf = new Date();
+      historyUnavailable = false;
     } catch (_) {
       // Cards remain readable if the optional history request is unavailable.
+      historyUnavailable = true;
     } finally {
       symbols.forEach((symbol) => pendingSymbols.delete(symbol));
     }
@@ -450,8 +471,9 @@
       const score = window.localSignalScore?.(rows) ?? 0;
       const earnings = earningsStatus(symbol);
       const swingPlan = makeSwingPlan(rows);
-      const swingComment = swingPlan && buildSwingComment(swingPlan, setup, earnings);
-      entryBySymbol.set(symbol, { symbol, setup, score, earnings, swingPlan, swingComment });
+      const session = getSessionStatus(rows);
+      const swingComment = swingPlan && buildSwingComment(swingPlan, setup, earnings, session);
+      entryBySymbol.set(symbol, { symbol, setup, score, earnings, swingPlan, swingComment, session });
     });
     const entries = [...entryBySymbol.values()];
     const groups = [
@@ -466,16 +488,22 @@
       existing?.remove();
       return;
     }
+    const dataStatus = historyUnavailable
+      ? "시세 이력 조회 실패 · 기존 화면 값만 참고"
+      : historyAsOf
+        ? `이력 조회 ${historyAsOf.toLocaleTimeString("ko-KR", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" })} ET · 장중 일봉은 최종 진입에서 제외`
+        : "시세 이력 확인 중";
     const board = existing || document.createElement("section");
     board.dataset.todaySwingBoard = "";
     board.style.cssText = "grid-column:1/-1;margin:0 0 12px;border:1px solid #bfdbfe;border-radius:16px;background:linear-gradient(135deg,#eff6ff,#fff);padding:12px;box-shadow:0 8px 22px rgba(15,23,42,.06)";
-    board.innerHTML = `<div style="margin-bottom:9px"><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#1d4ed8">TODAY'S SWING CANDIDATES</div><div style="margin-top:2px;font-size:11px;font-weight:800;color:#475569">전체 50개 중 셋업이 확인된 종목만 요약 · 카드와 동일한 목표·손익비 기준</div></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:7px">${groups.map((group) => `<div style="border-radius:10px;background:#fff;padding:8px"><div style="margin-bottom:3px;font-size:10px;font-weight:950;color:${group.color}">${group.label}</div><div style="margin-bottom:6px;font-size:8px;font-weight:800;color:#64748b">${group.description}</div>${group.items.map((entry) => `<div style="display:grid;gap:3px;padding:5px 0;border-top:1px solid #f1f5f9"><div style="display:flex;align-items:center;justify-content:space-between;gap:5px"><span style="font-size:11px;font-weight:950;color:#0f172a">${entry.symbol}</span><span style="font-size:9px;font-weight:900;color:${entry.swingPlan?.ratioColor || "#64748b"}">${entry.swingPlan?.ratio || "R:R 확인 중"}</span><span style="font-size:9px;font-weight:900;color:#2563eb">${entry.score}점</span></div><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:850;color:#475569;white-space:nowrap">${entry.setup.label} · ${entry.earnings.label}</span><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:900;color:${entry.swingComment?.color || "#64748b"};white-space:nowrap" title="${entry.swingComment?.reasons.join(" ") || "스윙 계획 계산 중"}">${entry.swingComment ? `판단 · ${entry.swingComment.verdict}` : "판단 · 계획 확인 중"}</span></div>`).join("")}</div>`).join("")}</div>`;
+    board.innerHTML = `<div style="margin-bottom:9px"><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#1d4ed8">TODAY'S SWING CANDIDATES</div><div style="margin-top:2px;font-size:11px;font-weight:800;color:#475569">전체 50개 중 셋업이 확인된 종목만 요약 · 카드와 동일한 목표·손익비 기준</div><div style="margin-top:3px;font-size:9px;font-weight:800;color:${historyUnavailable ? "#be123c" : "#64748b"}">${dataStatus}</div></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:7px">${groups.map((group) => `<div style="border-radius:10px;background:#fff;padding:8px"><div style="margin-bottom:3px;font-size:10px;font-weight:950;color:${group.color}">${group.label}</div><div style="margin-bottom:6px;font-size:8px;font-weight:800;color:#64748b">${group.description}</div>${group.items.map((entry) => `<div style="display:grid;gap:3px;padding:5px 0;border-top:1px solid #f1f5f9"><div style="display:flex;align-items:center;justify-content:space-between;gap:5px"><span style="font-size:11px;font-weight:950;color:#0f172a">${entry.symbol}</span><span style="font-size:9px;font-weight:900;color:${entry.swingPlan?.ratioColor || "#64748b"}">${entry.swingPlan?.ratio || "R:R 확인 중"}</span><span style="font-size:9px;font-weight:900;color:#2563eb">${entry.score}점</span></div><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:850;color:#475569;white-space:nowrap">${entry.setup.label} · ${entry.earnings.label}</span><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:900;color:${entry.swingComment?.color || "#64748b"};white-space:nowrap" title="${entry.swingComment?.reasons.join(" ") || "스윙 계획 계산 중"}">${entry.swingComment ? `판단 · ${entry.swingComment.verdict}` : "판단 · 계획 확인 중"}</span></div>`).join("")}</div>`).join("")}</div>`;
     const cardContainer = cards[0]?.parentElement;
     if (!existing && cardContainer) cardContainer.before(board);
   };
 
   const notifiedAlerts = new Set();
   let swingSummaryOpen = false;
+  let enhanceInFlight = false;
   const notificationsArmed = () => window.localStorage.getItem("nasdaq-watchlist:swing-notifications") === "enabled";
 
   const notifySwingAlerts = (alerts) => {
@@ -569,37 +597,52 @@
   };
 
   const enhance = async () => {
-    const compactCards = [...document.querySelectorAll("button.market-compact-card")];
-    const actionCards = [...document.querySelectorAll("button.market-action-card")];
-    const summaryCards = compactCards.length ? compactCards : actionCards;
-    if (!summaryCards.length || !window.localSignalScore) return;
-    await fetchEarnings(summaryCards.map(getSymbol).filter(Boolean));
-    const required = [];
-    for (const card of summaryCards) {
-      const symbol = getSymbol(card);
-      if (!symbol) continue;
-      const rows = historyBySymbol.get(symbol);
-      if (rows) renderCard(card, symbol, rows);
-      else if (!pendingSymbols.has(symbol)) required.push(symbol);
+    if (enhanceInFlight) return;
+    enhanceInFlight = true;
+    try {
+      const compactCards = [...document.querySelectorAll("button.market-compact-card")];
+      const actionCards = [...document.querySelectorAll("button.market-action-card")];
+      const summaryCards = compactCards.length ? compactCards : actionCards;
+      if (!summaryCards.length || !window.localSignalScore) return;
+      await fetchEarnings(summaryCards.map(getSymbol).filter(Boolean));
+      const required = [];
+      for (const card of summaryCards) {
+        const symbol = getSymbol(card);
+        if (!symbol) continue;
+        const rows = historyBySymbol.get(symbol);
+        if (rows) renderCard(card, symbol, rows);
+        else if (!pendingSymbols.has(symbol)) required.push(symbol);
+      }
+      for (let start = 0; start < required.length; start += 12) await fetchHistory(required.slice(start, start + 12));
+      for (const card of compactCards) {
+        const symbol = getSymbol(card);
+        const rows = symbol && historyBySymbol.get(symbol);
+        if (rows) renderCard(card, symbol, rows);
+      }
+      renderTodaySwingBoard(summaryCards);
+      renderSwingAlerts(summaryCards);
+      installSwingSummaryToggle();
+      applySwingSummaryVisibility();
+    } finally {
+      enhanceInFlight = false;
     }
-    for (let start = 0; start < required.length; start += 12) await fetchHistory(required.slice(start, start + 12));
-    for (const card of compactCards) {
-      const symbol = getSymbol(card);
-      const rows = symbol && historyBySymbol.get(symbol);
-      if (rows) renderCard(card, symbol, rows);
-    }
-    renderTodaySwingBoard(summaryCards);
-    renderSwingAlerts(summaryCards);
-    installSwingSummaryToggle();
-    applySwingSummaryVisibility();
   };
 
   setTimeout(enhance, 1800);
   setInterval(enhance, 30000);
-  setInterval(() => {
-    installSwingSummaryToggle();
-    applySwingSummaryVisibility();
-  }, 1200);
+  const root = document.getElementById("root");
+  if (root) {
+    let toggleRefreshQueued = false;
+    new MutationObserver(() => {
+      if (toggleRefreshQueued) return;
+      toggleRefreshQueued = true;
+      setTimeout(() => {
+        toggleRefreshQueued = false;
+        installSwingSummaryToggle();
+        applySwingSummaryVisibility();
+      }, 0);
+    }).observe(root, { childList: true, subtree: true });
+  }
 })();
 
 /* Keep the detailed board controls, without a duplicate quick-filter row above them. */
@@ -1146,50 +1189,4 @@
   };
   setTimeout(setupSectorFlow, 0);
   setInterval(setupSectorFlow, 1000);
-})();
-
-/* Android-ready notification permission and a user-triggered delivery test. */
-(() => {
-  const supported = "serviceWorker" in navigator && "Notification" in window;
-  const showToast = (message) => {
-    const toast = document.createElement("div");
-    toast.setAttribute("role", "status");
-    toast.textContent = message;
-    toast.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:61;max-width:260px;border-radius:12px;padding:10px 13px;background:#0f172a;color:#fff;font-size:12px;font-weight:800;box-shadow:0 10px 24px rgba(15,23,42,.25);transition:opacity .25s";
-    document.body.append(toast);
-    setTimeout(() => { toast.style.opacity = "0"; setTimeout(() => toast.remove(), 250); }, 2800);
-  };
-  const buildControl = () => {
-    if (document.querySelector("[data-notification-control]") || (supported && Notification.permission === "granted")) return;
-    const control = document.createElement("button");
-    control.type = "button";
-    control.dataset.notificationControl = "";
-    control.setAttribute("aria-label", "안드로이드 알림 켜기");
-    control.title = "안드로이드 알림 켜기";
-    control.textContent = "🔔";
-    control.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:60;width:42px;height:42px;border:0;border-radius:50%;background:#0f172a;color:#fff;font-size:18px;box-shadow:0 10px 24px rgba(15,23,42,.25);cursor:pointer";
-    control.addEventListener("click", async () => {
-      if (!supported) { control.remove(); return showToast("이 브라우저는 알림을 지원하지 않습니다."); }
-      if (Notification.permission === "denied") { control.remove(); return showToast("알림은 브라우저 설정에서 허용할 수 있습니다."); }
-      try {
-        const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
-        if (permission !== "granted") return showToast("알림 권한이 허용되지 않았습니다.");
-        await navigator.serviceWorker.register("./sw.js");
-        const ready = await navigator.serviceWorker.ready;
-        await ready.showNotification("NASDAQ Watchlist", {
-          body: "안드로이드 알림 테스트가 정상적으로 도착했습니다.",
-          tag: "nasdaq-watchlist-test",
-          renotify: true,
-          data: { url: "/" }
-        });
-        showToast("알림 권한이 등록되었습니다.");
-      } catch (_) {
-        showToast("알림 설정을 완료하지 못했습니다.");
-      } finally {
-        control.remove();
-      }
-    });
-    document.body.append(control);
-  };
-  window.addEventListener("load", () => setTimeout(buildControl, 500), { once: true });
 })();
