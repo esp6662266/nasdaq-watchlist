@@ -583,16 +583,18 @@
 
   const installSwingSummaryToggle = () => {
     const todayButton = [...document.querySelectorAll("button")].find((button) => button.textContent.trim().startsWith("오늘의 5종목"));
-    if (!todayButton || document.querySelector("[data-swing-summary-toggle]")) return;
+    const summaryBoard = document.querySelector("[data-today-swing-board]");
+    if ((!todayButton && !summaryBoard) || document.querySelector("[data-swing-summary-toggle]")) return;
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.dataset.swingSummaryToggle = "";
-    toggle.style.cssText = "margin-left:8px;border:1px solid #bfdbfe;border-radius:999px;padding:7px 10px;font-size:11px;font-weight:950;line-height:1;white-space:nowrap";
+    toggle.style.cssText = `${todayButton ? "margin-left:8px" : "grid-column:1/-1;width:max-content;margin:0 0 10px"};border:1px solid #bfdbfe;border-radius:999px;padding:7px 10px;font-size:11px;font-weight:950;line-height:1;white-space:nowrap`;
     toggle.addEventListener("click", () => {
       swingSummaryOpen = !swingSummaryOpen;
       applySwingSummaryVisibility();
     });
-    todayButton.after(toggle);
+    if (todayButton) todayButton.after(toggle);
+    else summaryBoard.before(toggle);
     applySwingSummaryVisibility();
   };
 
@@ -846,96 +848,6 @@
   setTimeout(enhanceDashboard, 2200);
   setTimeout(enhanceDashboard, 6000);
   setInterval(enhanceDashboard, 5000);
-})();
-
-/* Replace the always-visible ticker tools with a compact, optional daily focus panel. */
-(() => {
-  const tickerOf = (card) => card.querySelector("img[alt$=' logo']")?.alt?.replace(/ logo$/, "") || "종목";
-  const scoreOf = (card) => Number(card.querySelector("[data-compact-insight]")?.getAttribute("aria-label")?.match(/점수 (\d+)점/)?.[1] || 0);
-  const bandOf = (card) => {
-    const text = card.querySelector("[data-compact-insight]")?.textContent || "";
-    const match = text.match(/BB 하단까지 ([\d.]+)%/);
-    return match ? Number(match[1]) : (text.includes("BB 하단 이탈") ? 0 : 99);
-  };
-
-  const refreshFocusCards = (list) => {
-    const candidates = [...document.querySelectorAll("button.market-compact-card")]
-      .map((card) => ({ card, ticker: tickerOf(card), score: scoreOf(card), band: bandOf(card) }))
-      .filter((item) => item.score > 0 && item.band < 99)
-      .sort((a, b) => ((a.band * 5) - a.score * .3) - ((b.band * 5) - b.score * .3))
-      .slice(0, 5);
-    list.replaceChildren(...candidates.map((item) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:1px solid #dbe4f0;border-radius:10px;background:#fff;padding:10px 11px;color:#1e293b;text-align:left;cursor:pointer";
-      const ticker = document.createElement("strong");
-      ticker.textContent = item.ticker;
-      ticker.style.cssText = "min-width:48px;font-size:13px;font-weight:950;letter-spacing:.02em";
-      const metrics = document.createElement("span");
-      metrics.style.cssText = "display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap";
-      const score = document.createElement("span");
-      score.textContent = `점수 ${item.score}`;
-      score.style.cssText = "border-radius:999px;background:#e0f2fe;color:#0369a1;padding:4px 7px;font-size:10px;font-weight:900;white-space:nowrap";
-      const band = document.createElement("span");
-      band.textContent = item.band === 0 ? "BB 하단 이탈" : `BB 하단 ${item.band.toFixed(1)}%`;
-      band.style.cssText = `border-radius:999px;background:${item.band <= 1 ? "#fef3c7" : "#f1f5f9"};color:${item.band <= 1 ? "#92400e" : "#475569"};padding:4px 7px;font-size:10px;font-weight:900;white-space:nowrap`;
-      metrics.append(score, band);
-      button.append(ticker, metrics);
-      button.addEventListener("click", () => item.card.click());
-      return button;
-    }));
-  };
-
-  const setupDailyFocus = () => {
-    const input = document.querySelector('input[aria-label*="관심종목"]');
-    const refresh = [...document.querySelectorAll("button")].find((button) => button.textContent.trim().includes("새로고침"));
-    if (!input || !refresh) return false;
-    let focus = document.querySelector("[data-daily-focus]");
-    if (focus) {
-      const list = focus.querySelector("[data-daily-focus-list]");
-      if (list && focus.dataset.open === "true") refreshFocusCards(list);
-      return true;
-    }
-    const tools = input.parentElement;
-    if (!tools) return false;
-    focus = document.createElement("section");
-    focus.dataset.dailyFocus = "";
-    focus.dataset.open = "false";
-    focus.style.cssText = "width:100%;max-width:580px;margin:0 0 10px";
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.textContent = "오늘의 5종목  ▾";
-    toggle.style.cssText = "width:100%;border:1px solid #cbd5e1;border-radius:12px;background:#fff;padding:11px 13px;color:#0f172a;font-size:13px;font-weight:950;text-align:left;cursor:pointer;box-shadow:0 1px 2px rgba(15,23,42,.04)";
-    const panel = document.createElement("div");
-    panel.hidden = true;
-    panel.style.cssText = "margin-top:8px;border:1px solid #dbe4f0;border-radius:12px;background:#f8fafc;padding:10px";
-    const title = document.createElement("div");
-    title.textContent = "BB 하단 거리와 신호 점수를 기준으로 정리한 오늘의 후보입니다.";
-    title.style.cssText = "margin:2px 2px 9px;color:#64748b;font-size:11px;font-weight:800;line-height:1.4";
-    const list = document.createElement("div");
-    list.dataset.dailyFocusList = "";
-    list.style.cssText = "display:flex;flex-direction:column;gap:6px";
-    const actions = document.createElement("div");
-    actions.style.cssText = "display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0";
-    const anchor = tools.parentElement;
-    tools.style.flex = "1";
-    input.style.minWidth = "0";
-    refresh.style.whiteSpace = "nowrap";
-    actions.append(tools, refresh);
-    panel.append(title, list, actions);
-    toggle.addEventListener("click", () => {
-      const open = panel.hidden;
-      panel.hidden = !open;
-      focus.dataset.open = String(open);
-      toggle.textContent = open ? "오늘의 5종목  ▴" : "오늘의 5종목  ▾";
-      if (open) refreshFocusCards(list);
-    });
-    focus.append(toggle, panel);
-    if (anchor) anchor.prepend(focus);
-    return true;
-  };
-  setTimeout(setupDailyFocus, 2200);
-  setInterval(setupDailyFocus, 30000);
 })();
 
 /* A compact market tape keeps the four key market references within reach. */
