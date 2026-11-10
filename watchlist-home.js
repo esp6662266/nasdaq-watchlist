@@ -15,7 +15,7 @@
   let workspace;
   let lastMarketCategory;
   try { lastMarketCategory = localStorage.getItem(MARKET_CATEGORY_KEY); } catch {}
-  let mode = "personal";
+  let mode = "market";
   let chartOpen = false;
   let showMarketBoard = false;
   let paintQueued = false;
