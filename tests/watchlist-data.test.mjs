@@ -7,16 +7,15 @@ const source = readFileSync(new URL("../watchlist-data.js", import.meta.url), "u
 const pages = "https://esp6662266.github.io/nasdaq-watchlist/";
 const netlify = "https://nasdaq-watchlist-0520214351.netlify.app";
 
-function load(location, fetchResponse = () => Response.json({ quotes: { "BRK-B": { close: 500 } } })) {
+function load(location) {
   const calls = [];
   const window = {
     async fetch(input, options) {
       calls.push({ input, options });
-      return fetchResponse();
+      return Response.json({ quotes: { "BRK-B": { close: 500 } } });
     },
-    dispatchEvent() {},
   };
-  runInNewContext(source, { window, location: new URL(location), URL, Request, Event });
+  runInNewContext(source, { window, location: new URL(location), URL, Request });
   return { window, calls };
 }
 
@@ -37,11 +36,4 @@ test("Netlify continues to use its same-origin APIs", async () => {
   const { window, calls } = load(netlify);
   await window.fetch("/api/history?symbols=AAPL");
   assert.equal(calls[0].input, "/api/history?symbols=AAPL");
-});
-
-test("Market-cap provider failure identifies the default-list fallback", async () => {
-  const { window } = load(netlify, () => Response.json({ ok: false }, { status: 502 }));
-  const response = await window.fetch("/api/market-cap");
-  assert.equal(response.status, 502);
-  assert.equal(window.NasdaqWatchlistData.marketCapStatus(), "fallback");
 });

@@ -1,7 +1,5 @@
 (() => {
   const quotes = new Map();
-  const histories = new Map();
-  const requests = new Map();
   const normalized = (symbol) => symbol?.toUpperCase().replace(/^BRK[.]B$/, "BRK-B");
   const nativeFetch = window.fetch.bind(window);
   const pagesOrigin = "https://esp6662266.github.io";
@@ -11,28 +9,22 @@
     "/api/market-cap", "/api/max-pain", "/api/news",
   ]);
   let requestId = 0;
-  let marketCapStatus = "loading";
 
-  function save(path, requested, payload, id) {
-    const isQuotes = path === "/api/quotes";
-    const target = isQuotes ? quotes : histories;
-    const records = isQuotes ? payload?.quotes : payload?.history;
+  function saveQuotes(requested, payload, id) {
+    const records = payload?.quotes;
     for (const symbol of requested) {
       const key = normalized(symbol);
-      const prior = target.get(key);
+      const prior = quotes.get(key);
       if (prior?.requestId > id) continue;
       const result = records?.[symbol] ?? records?.[key] ?? records?.[key.replace(/^BRK-B$/, "BRK.B")];
-      const usable = isQuotes ? Number.isFinite(result?.close) && result.close > 0 : Array.isArray(result) && result.length > 0;
-      const meta = payload?.meta?.[symbol] ?? payload?.meta?.[key];
-      target.set(key, {
+      const usable = Number.isFinite(result?.close) && result.close > 0;
+      quotes.set(key, {
         data: usable ? result : prior?.data,
-        meta: usable ? meta : prior?.meta,
         failed: !usable,
         receivedAt: Date.now(),
         requestId: id,
       });
     }
-    window.dispatchEvent(new Event("nasdaq-watchlist:data"));
   }
 
   window.fetch = async (input, options) => {
@@ -50,28 +42,10 @@
       const request = input instanceof Request ? new Request(remote, input) : remote.href;
       return nativeFetch(request, { ...options, credentials: "omit", mode: "cors" });
     };
-    if (path === "/api/market-cap") {
-      try {
-        const response = await fetchApi();
-        const payload = response.ok ? await response.clone().json().catch(() => null) : null;
-        marketCapStatus = payload?.ok ? (payload.data?.stale ? "stale" : "available") : "fallback";
-        return response;
-      } catch (error) {
-        marketCapStatus = "fallback";
-        throw error;
-      }
-    }
-    if (path !== "/api/quotes" && path !== "/api/history") return fetchApi();
+    if (path !== "/api/quotes") return fetchApi();
     const requested = (url.searchParams.get("symbols") || "").split(",").map((value) => value.trim().toUpperCase()).filter(Boolean);
     const id = ++requestId;
-    requested.forEach((symbol) => requests.set(path + normalized(symbol), id));
-    const finish = (payload) => {
-      save(path, requested, payload, id);
-      requested.forEach((symbol) => {
-        const key = path + normalized(symbol);
-        if (requests.get(key) === id) requests.delete(key);
-      });
-    };
+    const finish = (payload) => saveQuotes(requested, payload, id);
     try {
       const response = await fetchApi();
       if (response.ok) response.clone().json().then(finish, () => finish(null));
@@ -85,8 +59,5 @@
 
   window.NasdaqWatchlistData = {
     quote: (symbol) => quotes.get(normalized(symbol)),
-    history: (symbol) => histories.get(normalized(symbol)),
-    historyPending: (symbol) => requests.has("/api/history" + normalized(symbol)),
-    marketCapStatus: () => marketCapStatus,
   };
 })();

@@ -2,7 +2,7 @@
 (() => {
   const keyFor = (menu, index) => `nasdaq-watchlist-control:${menu.getAttribute("aria-label") || menu.name || index}`;
   const applyPreferences = () => {
-    const menus = [...document.querySelectorAll('select:not([aria-label="카테고리 바로 선택"])')];
+    const menus = [...document.querySelectorAll("select")];
     if (!menus.length) return false;
     menus.forEach((menu, index) => {
       const key = keyFor(menu, index);
@@ -52,6 +52,27 @@
   setInterval(compactMarketHeader, 2500);
 })();
 
+/* Local score prototype: trend 30 + Bollinger position 25 + momentum 20 + volume 15 - risk 10. */
+(() => {
+  const average = values => values.reduce((sum, value) => sum + value, 0) / values.length;
+  const score = rows => {
+    if (!rows || rows.length < 22) return null;
+    const close = rows.map(row => row.close).filter(Number.isFinite);
+    const volume = rows.map(row => row.volume).filter(Number.isFinite);
+    const last = close.at(-1), prior = close.at(-2), sma20 = average(close.slice(-20)), sma50 = average(close.slice(-50));
+    const deviation = Math.sqrt(average(close.slice(-20).map(value => (value - sma20) ** 2)));
+    let value = 0;
+    value += last > sma20 ? 10 : 0; value += sma20 > sma50 ? 10 : 0; value += last > sma50 ? 10 : 0;
+    const bb = deviation ? (last - (sma20 - 2 * deviation)) / (4 * deviation) : .5;
+    value += bb < .25 && last >= prior ? 25 : bb < .45 ? 15 : bb < .8 ? 5 : 0;
+    value += last > close.at(-6) ? 10 : 0; value += last > close.at(-21) ? 10 : 0;
+    value += volume.at(-1) > average(volume.slice(-20)) * 1.2 && last >= prior ? 15 : 5;
+    const volatility = average(close.slice(-14).map((value, index, list) => index ? Math.abs(value / list[index - 1] - 1) : 0));
+    return Math.max(0, Math.min(100, Math.round(value - Math.min(10, volatility * 250))));
+  };
+  window.localSignalScore = score;
+})();
+
 /* Keep the Signal Board focused on M7 plus the three market proxies. */
 (() => {
   const rotation = [
@@ -96,398 +117,599 @@
   setInterval(refresh, 60000);
 })();
 
-/* Share one completed-candle swing model across the board, details, and alerts. */
+/* Give each compact card one compact, readable view of its score and recent price action. */
 (() => {
-  const data = window.NasdaqWatchlistData;
-  const swing = window.NasdaqSwingPlan;
-  const modelBySymbol = new Map();
+  const historyBySymbol = new Map();
+  const historyChecks = new Map();
+  const pendingSymbols = new Set();
+  const average = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
   const earningsBySymbol = new Map();
-  const pendingEarnings = new Set();
-  const notified = new Set();
-  const historyMaxAge = 15 * 60 * 1000;
-  const earningsMaxAge = 15 * 60 * 1000;
-  const marketDate = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", dateStyle: "short" });
-  const marketClock = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-  const koreaTime = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  const priceText = (value) => Number.isFinite(value)
-    ? `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—";
-  const providerSymbol = (symbol) => symbol.replace(/^BRK[.]B$/, "BRK-B");
-  const cardSelector = 'button.market-compact-card, button.market-action-card, button[class*="grid-cols-[42px_"]';
-  let refreshTimer;
-  let summaryOpen = false;
+  const marketDate = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
+  const marketHour = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", hourCycle: "h23" });
+  let historyAsOf = null;
+  let historyUnavailable = false;
 
-  function dateOf(value) {
-    const timestamp = Date.parse(value);
-    return Number.isFinite(timestamp) ? marketDate.format(timestamp) : "";
-  }
-
-  function getSymbol(card) {
-    return window.NasdaqWatchlistHome.tickerForCard(card);
-  }
-
-  function marketSessionAt(now, quote) {
-    const date = marketDate.format(now);
-    const parts = Object.fromEntries(marketClock.formatToParts(now).map(({ type, value }) => [type, value]));
-    const minute = Number(parts.hour) * 60 + Number(parts.minute);
-    const knownEnd = dateOf(quote?.regularSessionEndsAt) === date;
-    const complete = knownEnd ? now >= Date.parse(quote.regularSessionEndsAt) : minute >= 960;
-    const weekday = parts.weekday !== "Sat" && parts.weekday !== "Sun";
-    return { date, complete, open: weekday && minute >= 570 && !complete, knownEnd };
-  }
-
-  function quoteState(symbol, now = Date.now()) {
-    const record = data.quote(symbol);
-    const quote = record?.data;
-    const stamp = Date.parse(quote?.asOf);
-    const fetched = Date.parse(quote?.fetchedAt);
-    const basis = Number.isFinite(stamp) ? `${koreaTime.format(stamp)} KST` : "시세 시각 미확인";
-    const session = { regular: "정규장", premarket: "장전", afterhours: "장후", close: "종가" }[quote?.session] || "";
-    const provenance = [quote?.source, session, basis].filter(Boolean).join(" · ");
-    if (record?.failed) return { quote, usable: false, label: quote ? "조회 실패 · 마지막 시세" : "시세 조회 실패", provenance };
-    if (!quote) return { usable: false, label: "시세 확인 중", provenance: "" };
-    if (!Number.isFinite(stamp) || !Number.isFinite(fetched)) {
-      return { quote, usable: false, label: "시세 시각 미확인", provenance };
+  const getSessionStatus = (rows, symbol) => {
+    const latestSession = rows.at(-1)?.time;
+    const now = new Date();
+    const today = marketDate.format(now);
+    const quote = window.NasdaqWatchlistData?.quote(symbol);
+    const regularClose = Date.parse(quote?.data?.regularSessionEndsAt);
+    const trustedClose = !quote?.failed && !quote?.data?.stale && Number.isFinite(regularClose) && marketDate.format(regularClose) === today;
+    const beforeClose = trustedClose ? now.getTime() < regularClose : Number(marketHour.format(now)) < 16;
+    const inProgress = latestSession === today && beforeClose;
+    const check = historyChecks.get(symbol);
+    const quoteTime = Date.parse(quote?.data?.asOf);
+    const quoteDate = Number.isFinite(quoteTime) ? marketDate.format(quoteTime) : null;
+    const missingClose = quoteDate && (!beforeClose || quoteDate !== today) && latestSession < quoteDate;
+    if (!check?.valid || now.getTime() - check.at >= 15 * 60_000 || missingClose) {
+      return { inProgress, unverified: true, label: "완료 일봉 확인 필요", detail: "최근 완료 일봉을 다시 확인하고 있습니다.", color: "#a16207", background: "#fef3c7" };
     }
-    const market = marketSessionAt(now, quote);
-    const lastTradeDate = marketDate.format(stamp);
-    const delayed = market.open && now - stamp > 25 * 60 * 1000;
-    const missedClose = market.knownEnd && market.complete && lastTradeDate !== market.date;
-    if (quote.stale || delayed || missedClose || now - fetched > 30 * 60 * 1000 ||
-        now - stamp > 4 * 24 * 60 * 60 * 1000 || stamp - now > 2 * 60 * 1000) {
-      return { quote, usable: false, label: "이전 시세", provenance };
-    }
-    return { quote, usable: true, label: "시세 확인", provenance };
-  }
+    return inProgress
+      ? { inProgress: true, label: "장중 일봉 · 종가 미확정", detail: "오늘 일봉은 진행 중입니다. 종가 확정 스윙 신호로는 아직 판단하지 않습니다.", color: "#a16207", background: "#fef3c7" }
+      : { inProgress: false, label: "완료 일봉 기준", detail: "가장 최근 완료 일봉 기준으로 계산했습니다.", color: "#166534", background: "#dcfce7" };
+  };
 
-  function earningsState(symbol, now) {
-    const record = earningsBySymbol.get(symbol);
-    if (!record) return { label: "실적 일정 확인 중", verified: false };
-    const event = record.event;
-    if (record.asOf !== marketDate.format(now) || now - record.receivedAt > earningsMaxAge) {
-      return { label: "실적 일정 재확인 중", verified: false };
+  const getSymbol = (card) => {
+    const logo = card.querySelector("img[alt$=' logo']");
+    if (logo?.alt) {
+      const symbol = logo.alt.replace(/ logo$/, "").toUpperCase();
+      return symbol === "BRK-B" ? "BRK.B" : symbol;
     }
-    const verified = record.status === "complete";
-    if (!event?.date) return { label: verified ? "실적 · 7일 내 일정 없음" : "실적 일정 미확인", verified, soon: verified ? false : undefined };
-    const days = Math.round((Date.parse(event.date) - Date.parse(record.asOf)) / 86400000);
-    if (!Number.isFinite(days) || days < 0) return { label: "실적 일정 미확인", verified: false };
-    const session = { premarket: "장전", afterhours: "장후" }[event.session] || "시간 미정";
-    return { label: `실적 D-${days} · ${session}`, date: event.date, verified, soon: days <= 2 };
-  }
+    return card.textContent.match(/\b(?:AAPL|MSFT|GOOGL|AMZN|NVDA|META|TSLA|QQQ|SPY|DIA|[A-Z]{1,5})\b/)?.[0] || null;
+  };
 
-  function getModel(symbol, now) {
-    const status = quoteState(symbol, now);
-    const quote = status.quote;
-    const history = data.history(symbol);
-    const rows = history?.data || [];
-    const latestDate = rows.at(-1)?.time;
-    const quoteDate = dateOf(quote?.asOf);
-    const marketSession = marketSessionAt(now, quote);
-    const closeExpected = quoteDate && (quoteDate !== marketSession.date || marketSession.complete || quote?.session === "afterhours" || quote?.session === "close");
-    const historyUsable = Boolean(latestDate && !history.failed && history.meta?.status === "available" && !history.meta.stale &&
-      now - history.receivedAt < 30 * 60 * 1000 && (!closeExpected || latestDate >= quoteDate));
-    const earnings = earningsState(symbol, now);
-    const model = swing.analyze({ symbol, rows, historyUsable, quoteUsable: status.usable, earnings, now: new Date(now), marketSession });
-    if (!status.usable || !historyUsable || !earnings.verified) {
-      model.comment = { ...model.comment, verdict: "판정 보류", tier: "hold" };
-    }
-    const nextPrice = status.usable && historyUsable
-      ? (model.comment.tier === "entry" ? model.plan?.targetValue : model.plan?.entryValue) : null;
+  // Keep the user-facing Berkshire symbol as BRK.B, while querying the data
+  // provider with its stable dash-separated identifier.
+  const providerSymbol = (symbol) => symbol === "BRK.B" ? "BRK-B" : symbol;
+
+  const makePoints = (rows) => {
+    const values = rows.slice(-20).map((row) => Number(row.close)).filter(Number.isFinite);
+    if (values.length < 2) return "";
+    const low = Math.min(...values), high = Math.max(...values), span = high - low || 1;
+    return values.map((value, index) => {
+      const x = (index / (values.length - 1)) * 100;
+      const y = 28 - ((value - low) / span) * 24;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+  };
+
+  const scoreStyle = (score) => {
+    if (score >= 75) return { label: "추세 우세", color: "#1d4ed8", background: "#dbeafe" };
+    if (score >= 60) return { label: "진입 검토", color: "#0369a1", background: "#e0f2fe" };
+    if (score >= 40) return { label: "대기", color: "#475569", background: "#e2e8f0" };
+    return { label: "관찰 필요", color: "#be123c", background: "#ffe4e6" };
+  };
+
+  const explainSignal = (rows, session) => {
+    const recent = rows.slice(-20);
+    const closes = recent.map((row) => Number(row.close)).filter(Number.isFinite);
+    const volumes = recent.map((row) => Number(row.volume)).filter(Number.isFinite);
+    if (closes.length < 20) return { label: "지표 확인 중", detail: "최근 지표 데이터가 충분하지 않습니다." };
+
+    const last = closes.at(-1);
+    const prior = closes.at(-2);
+    const sma20 = average(closes);
+    const deviation = Math.sqrt(average(closes.map((value) => (value - sma20) ** 2)));
+    const bbPosition = deviation ? ((last - (sma20 - 2 * deviation)) / (4 * deviation)) * 100 : 50;
+    const isInProgressSession = session.inProgress;
+    // Compare a finished daily candle with the prior 19 completed sessions only.
+    const completedVolumes = isInProgressSession ? volumes.slice(0, -1) : volumes;
+    const volumeAverage = completedVolumes.length ? average(completedVolumes) : null;
+    const volumeRatio = volumeAverage ? volumes.at(-1) / volumeAverage : null;
+    const fiveDayBase = closes.at(-6);
+    const fiveDayReturn = fiveDayBase ? ((last / fiveDayBase) - 1) * 100 : 0;
+
+    let label = "지표 혼조";
+    if (bbPosition <= 15) label = "BB 하단권";
+    else if (bbPosition >= 85) label = "BB 상단권";
+    else if (last < sma20 && fiveDayReturn < 0) label = "20일선 아래";
+    else if (last > sma20 && fiveDayReturn > 0) label = "20일선 위";
+    else if (last < prior) label = "단기 하락";
+    else if (last > prior) label = "단기 상승";
+    else if (!isInProgressSession && volumeRatio != null && volumeRatio < 0.8) label = "거래량 부족";
+    else if (!isInProgressSession && volumeRatio != null && volumeRatio >= 1.5) label = "거래량 증가";
+
+    const volumeText = volumeRatio == null
+      ? "거래량 비교 불가"
+      : isInProgressSession
+        ? `장중 거래량은 20일 평균의 ${volumeRatio.toFixed(2)}배 (진행 중)`
+        : `거래량은 20일 평균의 ${volumeRatio.toFixed(2)}배`;
+    const positionText = `BB 위치 ${Math.max(0, Math.min(100, bbPosition)).toFixed(0)}%`;
+    const trendText = `종가는 20일선 ${last >= sma20 ? "위" : "아래"}`;
+    const momentumText = `5일 ${fiveDayReturn >= 0 ? "+" : ""}${fiveDayReturn.toFixed(1)}%`;
+    return { label, detail: `${volumeText} · ${positionText} · ${trendText} · ${momentumText}` };
+  };
+
+  // Reference-only swing levels derived from the latest completed daily candles.
+  // They are planning levels, not an instruction to buy or sell.
+  const makeSwingPlan = (rows) => {
+    const recent = rows.slice(-12).filter((row) => Number.isFinite(Number(row.close)));
+    if (recent.length < 7) return null;
+    const previous = recent.at(-2);
+    const entry = Number.isFinite(Number(previous.high)) ? Number(previous.high) : Number(previous.close);
+    const lows = recent.slice(-7, -1).map((row) => Number(row.low ?? row.close)).filter(Number.isFinite);
+    const stop = Math.min(...lows);
+    const risk = entry - stop;
+    if (!Number.isFinite(entry) || !Number.isFinite(stop) || risk <= 0) return null;
+    const resistanceRows = rows.slice(-21, -1).filter((row) => Number.isFinite(Number(row.close)));
+    const resistanceHigh = Math.max(...resistanceRows.map((row) => Number(row.high ?? row.close)).filter(Number.isFinite));
+    const resistanceCloses = resistanceRows.slice(-20).map((row) => Number(row.close)).filter(Number.isFinite);
+    const resistanceAverage = resistanceCloses.length ? average(resistanceCloses) : null;
+    const resistanceDeviation = resistanceAverage == null ? null : Math.sqrt(average(resistanceCloses.map((value) => (value - resistanceAverage) ** 2)));
+    const upperBand = resistanceDeviation == null ? null : resistanceAverage + resistanceDeviation * 2;
+    const targets = [
+      { value: resistanceHigh, source: "20일 고점" },
+      { value: upperBand, source: "BB 상단" },
+    ].filter((candidate) => Number.isFinite(candidate.value) && candidate.value > entry * 1.002).sort((a, b) => a.value - b.value);
+    const target = targets[0] || null;
+    const ratio = target ? (target.value - entry) / risk : null;
+    const price = (value) => `$${Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
     return {
-      ...model, historyUsable, quoteUsable: status.usable, earnings,
-      name: quote?.name || quote?.longName, dataState: status.label,
-      provenance: status.provenance, price: quote?.close ?? null, changePercent: quote?.changePercent ?? null,
-      verdict: model.comment.verdict, nextPrice: nextPrice ?? null,
+      entry: price(entry),
+      entryValue: entry,
+      stop: price(stop),
+      stopValue: stop,
+      target: target ? price(target.value) : "저항 확인 필요",
+      targetValue: target?.value ?? null,
+      targetSource: target?.source || "목표 미확정",
+      ratio: ratio == null ? "-" : `${ratio.toFixed(1)}R`,
+      ratioValue: ratio,
+      ratioColor: ratio != null && ratio >= 2 ? "#0369a1" : "#be123c",
+      latestClose: Number(recent.at(-1).close),
+      detail: `전일 고점 ${price(entry)} 돌파 확인 · 최근 6일 저점 ${price(stop)} 이탈 시 계획 무효 · 1차 목표는 ${target?.source || "추가 저항 확인"} 기준`,
     };
-  }
+  };
 
-  async function fetchEarnings(symbols) {
+  const classifySwingSetup = (rows) => {
+    const recent = rows.slice(-60).filter((row) => Number.isFinite(Number(row.close)));
+    if (recent.length < 22) return { label: "셋업 대기", detail: "일봉 데이터가 충분하지 않아 패턴을 분류하지 않습니다.", color: "#64748b", background: "#f1f5f9" };
+    const closes = recent.map((row) => Number(row.close));
+    const latest = recent.at(-1);
+    const previous = recent.at(-2);
+    const last = closes.at(-1);
+    const prior = closes.at(-2);
+    const sma20 = average(closes.slice(-20));
+    const sma50 = recent.length >= 50 ? average(closes.slice(-50)) : average(closes.slice(-30));
+    const deviation = Math.sqrt(average(closes.slice(-20).map((value) => (value - sma20) ** 2)));
+    const bbPosition = deviation ? (last - (sma20 - 2 * deviation)) / (4 * deviation) : 0.5;
+    const previousTenHigh = Math.max(...recent.slice(-11, -1).map((row) => Number(row.high ?? row.close)).filter(Number.isFinite));
+    const previousFiveHigh = Math.max(...recent.slice(-6, -1).map((row) => Number(row.high ?? row.close)).filter(Number.isFinite));
+    const volumes = recent.slice(-21, -1).map((row) => Number(row.volume)).filter(Number.isFinite);
+    const volumeRatio = volumes.length && Number.isFinite(Number(latest.volume)) ? Number(latest.volume) / average(volumes) : null;
+
+    if (Number.isFinite(previousTenHigh) && last > previousTenHigh * 1.001 && (volumeRatio == null || volumeRatio >= 1.15)) {
+      return { label: "박스 돌파", detail: "최근 10일 고점 돌파와 거래량 확인 구간입니다.", color: "#0369a1", background: "#e0f2fe" };
+    }
+    if (last > sma20 && sma20 >= sma50 && last < previousFiveHigh && last >= prior) {
+      return { label: "추세 눌림목", detail: "상승 추세 안에서 눌림 뒤 반등 확인을 보는 구간입니다.", color: "#1d4ed8", background: "#dbeafe" };
+    }
+    if (bbPosition <= 0.3 && last >= prior) {
+      return { label: "하단 반등", detail: "볼린저밴드 하단권의 반등 시도입니다. 확인 전 추격은 피합니다.", color: "#0369a1", background: "#e0f2fe" };
+    }
+    if (last < sma20 && sma20 < sma50) {
+      return { label: "추세 이탈", detail: "단기와 중기 추세가 모두 약해 신규 진입보다 관찰이 우선입니다.", color: "#be123c", background: "#ffe4e6" };
+    }
+    return { label: "셋업 대기", detail: "현재는 진입 패턴이 뚜렷하지 않아 방향 확인이 필요합니다.", color: "#475569", background: "#e2e8f0" };
+  };
+
+  const earningsStatus = (symbol) => {
+    const record = earningsBySymbol.get(providerSymbol(symbol));
+    const today = marketDate.format(Date.now());
+    if (!record || record.asOf !== today || Date.now() - record.receivedAt >= 15 * 60_000) {
+      return { label: "실적 일정 확인 중", detail: "NASDAQ 공개 캘린더를 불러오는 중입니다.", color: "#64748b", background: "#f1f5f9" };
+    }
+    const { event, verified } = record;
+    if (!event) return verified
+      ? { verified, label: "실적 · 7일 내 일정 없음", detail: "NASDAQ 공개 캘린더의 향후 7일 기준입니다.", color: "#64748b", background: "#f8fafc" }
+      : { verified, label: "실적 일정 미확인", detail: "NASDAQ 공개 캘린더를 일부 또는 전부 확인하지 못했습니다.", color: "#a16207", background: "#fef3c7" };
+    const days = Math.round((Date.parse(event.date) - Date.parse(today)) / 86400000);
+    const time = event.time === "time-pre-market" ? "장전" : event.time === "time-after-market" ? "장후" : "시간 미정";
+    const closeRisk = Number.isFinite(days) && days <= 2;
+    return {
+      verified,
+      label: `실적 D-${Number.isFinite(days) ? days : "?"} · ${time}`,
+      detail: `${event.date} ${time} 실적 발표 예정. 이벤트 전 신규 스윙 진입은 보수적으로 검토합니다.`,
+      color: closeRisk ? "#be123c" : "#9a3412",
+      background: closeRisk ? "#ffe4e6" : "#ffedd5",
+    };
+  };
+
+  const buildSwingComment = (swingPlan, swingSetup, earnings, session) => {
+    const earningsSoon = /^실적 D-[0-2]\b/.test(earnings.label);
+    const entryConfirmed = Number.isFinite(swingPlan.latestClose) && swingPlan.latestClose >= swingPlan.entryValue;
+    const rewardEnough = Number.isFinite(swingPlan.ratioValue) && swingPlan.ratioValue >= 2;
+    const setupValid = ["추세 눌림목", "하단 반등", "박스 돌파"].includes(swingSetup.label);
+    const buyNow = entryConfirmed && rewardEnough && setupValid && earnings.verified && !earningsSoon && !session.inProgress && !session.unverified;
+    const tier = buyNow
+      ? { label: "규칙상 진입 조건 충족", color: "#166534", background: "#dcfce7" }
+      : setupValid && !earningsSoon
+        ? { label: "진입 대기", color: "#a16207", background: "#fef3c7" }
+        : { label: "관찰", color: "#475569", background: "#e2e8f0" };
+    const reasons = buyNow
+      ? [
+        `전일 고점 ${swingPlan.entry} 돌파가 확인됐습니다.`,
+        `1차 목표까지 계획 손익비가 ${swingPlan.ratio}입니다.`,
+        `${swingSetup.label} 셋업이며 실적 임박 경고가 없습니다.`,
+      ]
+      : [
+        !entryConfirmed ? `전일 고점 ${swingPlan.entry}을 아직 돌파하지 않았습니다.` : null,
+        !rewardEnough ? `계획 손익비가 ${swingPlan.ratio}로 2R 기준에 못 미칩니다.` : null,
+        !setupValid ? `${swingSetup.label} 상태라 신규 진입 근거가 약합니다.` : null,
+        earningsSoon ? `${earnings.label} 일정이 임박했습니다.` : null,
+        !earnings.verified ? "실적 일정 확인이 필요합니다." : null,
+        session.unverified ? "최근 완료 일봉 확인이 필요합니다." : null,
+        session.inProgress ? "오늘 일봉이 아직 진행 중이라 종가 확정 확인이 필요합니다." : null,
+      ].filter(Boolean);
+    return {
+      verdict: tier.label,
+      color: tier.color,
+      background: tier.background,
+      tier: buyNow ? "entry" : setupValid && !earningsSoon ? "waiting" : "watch",
+      reasons,
+    };
+  };
+
+  const removeDuplicatePrimarySignal = (card) => {
+    card.querySelectorAll("[data-primary-signal]").forEach((element) => element.remove());
+    card.querySelectorAll("*").forEach((element) => {
+      if (element.textContent.trim() === "BUY SELL") element.style.display = "none";
+    });
+  };
+
+  // Make the swing state visible where the original one-word signal was shown.
+  // The raw signal remains available in a data attribute for later scoring rules.
+  const renderSwingHeaderStatus = (card) => {
+    const states = {
+      "매수": { label: "진입 후보", detail: "하단·반등 조건을 추가 확인", color: "#1d4ed8", background: "#dbeafe" },
+      "관망": { label: "대기", detail: "추세 또는 반등 확인 신호 부족", color: "#475569", background: "#e2e8f0" },
+      "추격": { label: "추격 금지", detail: "가격이 확장된 구간 — 눌림 대기", color: "#be123c", background: "#ffe4e6" },
+      "축소": { label: "익절/축소 검토", detail: "상단·과열 구간 — 신규 진입 보류", color: "#be123c", background: "#ffe4e6" },
+    };
+    const header = card.firstElementChild;
+    const leftGroup = header?.firstElementChild;
+    const badge = [...(leftGroup?.children || [])].find((element) => states[element.dataset.rawSignal || element.textContent.trim()]);
+    if (!badge) return;
+    const rawSignal = badge.dataset.rawSignal || badge.textContent.trim();
+    const state = states[rawSignal];
+    badge.dataset.rawSignal = rawSignal;
+    badge.dataset.swingHeaderStatus = "";
+    badge.textContent = state.label;
+    badge.title = state.detail;
+    badge.setAttribute("aria-label", `${state.label}. ${state.detail}`);
+    badge.style.cssText = `border-radius:999px;padding:3px 7px;background:${state.background};color:${state.color};font-size:9px;font-weight:900;line-height:1.2;white-space:nowrap`;
+  };
+
+  const renderCard = (card, symbol, rows) => {
+    const existing = card.querySelector("[data-compact-insight]");
+    if (existing) existing.remove();
+    const score = window.localSignalScore?.(rows);
+    const points = makePoints(rows);
+    if (score == null || !points) return;
+    removeDuplicatePrimarySignal(card);
+    renderSwingHeaderStatus(card);
+    const style = scoreStyle(score);
+    const session = getSessionStatus(rows, symbol);
+    const reason = explainSignal(rows, session);
+    const swingPlan = makeSwingPlan(rows);
+    const swingSetup = classifySwingSetup(rows);
+    const earnings = earningsStatus(symbol);
+    const swingComment = swingPlan && buildSwingComment(swingPlan, swingSetup, earnings, session);
+    const closes = rows.map((row) => Number(row.close)).filter(Number.isFinite);
+    const first = closes.at(-1), previous = closes.at(-2);
+    const recent = closes.slice(-20);
+    const average = recent.reduce((sum, value) => sum + value, 0) / recent.length;
+    const deviation = Math.sqrt(recent.reduce((sum, value) => sum + (value - average) ** 2, 0) / recent.length);
+    const lower = average - 2 * deviation;
+    const lowerDistance = ((first - lower) / first) * 100;
+    const monthAgo = closes.at(-21);
+    const monthReturn = monthAgo ? ((first / monthAgo) - 1) * 100 : null;
+    const distanceText = lowerDistance <= 0 ? "BB 하단 이탈" : `BB 하단까지 ${lowerDistance.toFixed(1)}%`;
+    const returnText = monthReturn == null ? "1개월 수익률 -" : `1개월 ${monthReturn >= 0 ? "+" : ""}${monthReturn.toFixed(1)}%`;
+    const lineColor = first >= previous ? "#2563eb" : "#e11d48";
+    const insight = document.createElement("div");
+    insight.dataset.compactInsight = "";
+    insight.dataset.chartKey = symbol.replace(/[^A-Z0-9_-]/g, "_");
+    insight.setAttribute("aria-label", `${symbol} 신호 점수 ${score}점, ${style.label}, 이유 ${reason.label}. ${reason.detail}. 최근 20일 가격 흐름`);
+    insight.style.cssText = "display:flex;flex-direction:column;gap:5px;margin-top:8px;padding:7px 54px 7px 7px;border-radius:8px;background:rgba(248,250,252,.9);min-height:76px";
+    const planMarkup = swingPlan ? `<div data-swing-plan style="margin-top:2px;border-top:1px solid #e2e8f0;padding-top:6px"><div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:4px"><span style="font-size:8px;font-weight:950;letter-spacing:.05em;color:#64748b">스윙 계획 · 참고</span><span data-swing-setup style="overflow:hidden;text-overflow:ellipsis;border-radius:999px;padding:3px 5px;background:${swingSetup.background};color:${swingSetup.color};font-size:8px;font-weight:950;white-space:nowrap" title="${swingSetup.detail}">${swingSetup.label}</span></div><span data-session-status style="display:block;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${session.background};color:${session.color};font-size:8px;font-weight:900;white-space:nowrap" title="${session.detail}">${session.label}</span><span data-earnings-alert style="display:block;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:4px 5px;background:${earnings.background};color:${earnings.color};font-size:8px;font-weight:900;white-space:nowrap" title="${earnings.detail}">${earnings.label}</span><div data-swing-comment-wrap style="position:relative;margin-bottom:5px"><span data-swing-comment-trigger style="display:block;cursor:help;border-radius:6px;padding:5px 6px;background:${swingComment.background};color:${swingComment.color};font-size:10px;font-weight:950">판단 · ${swingComment.verdict}</span><div data-swing-comment role="tooltip" style="display:none;position:absolute;z-index:60;left:0;right:0;top:calc(100% + 4px);border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:7px;box-shadow:0 12px 28px rgba(15,23,42,.18);font-size:9px;color:#334155"><strong style="display:block;margin-bottom:4px;color:${swingComment.color};font-size:10px">${swingComment.verdict}</strong>${swingComment.reasons.map((reason) => `<div style="margin-top:3px">• ${reason}</div>`).join("")}<div style="margin-top:5px;color:#64748b">자동 기술 규칙 기준 · 투자자문 아님</div></div></div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px"><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">진입 확인</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#1d4ed8;white-space:nowrap">${swingPlan.entry}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">손절 기준</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#be123c;white-space:nowrap">${swingPlan.stop}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">1차 목표 · ${swingPlan.targetSource}</small><strong style="display:block;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#0369a1;white-space:nowrap">${swingPlan.target}</strong></span><span style="min-width:0;border-radius:6px;background:#fff;padding:4px"><small style="display:block;font-size:8px;font-weight:800;color:#64748b">계획 손익비</small><strong style="display:block;font-size:9px;color:${swingPlan.ratioColor}">${swingPlan.ratio}</strong></span></div></div>` : "";
+    insight.innerHTML = `<span style="display:flex;align-items:center;gap:7px;min-width:0"><span style="display:flex;min-width:57px;flex-direction:column;line-height:1.05"><span style="font-size:9px;font-weight:900;letter-spacing:.04em;color:#64748b">신호 점수</span><strong style="font-size:16px;font-weight:950;color:${style.color}">${score}<small style="font-size:9px;margin-left:1px">/100</small></strong></span><span data-signal-reason style="font-size:9px;font-weight:900;color:${style.color};background:${style.background};padding:3px 5px;border-radius:999px;white-space:nowrap"><span data-signal-status>${style.label}</span><span data-signal-reason-text> · ${reason.label}</span></span></span><svg viewBox="0 0 100 32" preserveAspectRatio="none" role="img" aria-label="최근 20일 미니 차트" style="width:100%;height:36px;overflow:visible"><polyline points="${points}" fill="none" stroke="${lineColor}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg><span style="font-size:9px;font-weight:800;color:#64748b;white-space:nowrap">${distanceText} · ${returnText}</span>${planMarkup}`;
+    const reasonLabel = insight.querySelector("[data-signal-reason]");
+    reasonLabel.setAttribute("title", reason.detail);
+    reasonLabel.setAttribute("aria-label", `${style.label}. 이유: ${reason.label}. ${reason.detail}`);
+    reasonLabel.dataset.reasonDetail = reason.detail;
+    if (swingPlan) insight.querySelector("[data-swing-plan]")?.setAttribute("title", swingPlan.detail);
+    const commentWrap = insight.querySelector("[data-swing-comment-wrap]");
+    const comment = insight.querySelector("[data-swing-comment]");
+    if (commentWrap && comment) {
+      commentWrap.addEventListener("mouseenter", () => { comment.style.display = "block"; });
+      commentWrap.addEventListener("mouseleave", () => { comment.style.display = "none"; });
+    }
+    const metrics = card.querySelector(":scope > .mt-2.grid.grid-cols-3");
+    if (metrics) metrics.before(insight); else card.append(insight);
+  };
+
+  const fetchHistory = async (symbols) => {
     if (!symbols.length) return;
-    symbols.forEach((symbol) => pendingEarnings.add(symbol));
+    symbols.forEach((symbol) => pendingSymbols.add(symbol));
+    const available = new Set();
     try {
-      const response = await fetch(`/api/earnings?days=7&symbols=${encodeURIComponent(symbols.map(providerSymbol).join(","))}`);
+      const requestedSymbols = symbols.map(providerSymbol);
+      const response = await fetch(`/api/history?symbols=${encodeURIComponent(requestedSymbols.join(","))}`);
       const payload = await response.json();
-      if (!response.ok || !payload.ok) throw new Error("Calendar unavailable");
+      if (!response.ok || !payload.ok) throw new Error("일봉 조회 실패");
+      for (let index = 0; index < symbols.length; index += 1) {
+        const symbol = symbols[index];
+        const rows = payload.history?.[requestedSymbols[index]] ?? payload.history?.[symbol];
+        const meta = payload.meta?.[requestedSymbols[index]] ?? payload.meta?.[symbol];
+        if (Array.isArray(rows) && rows.length) {
+          historyBySymbol.set(symbol, rows);
+          if (!meta?.stale && meta?.status !== "unavailable") available.add(symbol);
+        }
+      }
+      historyAsOf = new Date();
+      historyUnavailable = false;
+    } catch (_) {
+      // Cards remain readable if the optional history request is unavailable.
+      historyUnavailable = true;
+    } finally {
       for (const symbol of symbols) {
+        historyChecks.set(symbol, { at: Date.now(), valid: available.has(symbol) });
+        pendingSymbols.delete(symbol);
+      }
+    }
+  };
+
+  const fetchEarnings = async (symbols) => {
+    const now = Date.now();
+    const today = marketDate.format(now);
+    const pending = [...new Set(symbols.map(providerSymbol))].filter((symbol) => {
+      const record = earningsBySymbol.get(symbol);
+      const retryAfter = record?.verified ? 15 * 60_000 : 2 * 60_000;
+      return !record || record.asOf !== today || now - record.receivedAt >= retryAfter;
+    });
+    if (!pending.length) return;
+    try {
+      const response = await fetch(`/api/earnings?days=7&symbols=${encodeURIComponent(pending.join(","))}`);
+      const payload = await response.json();
+      if (!response.ok || !payload.ok || payload.asOf !== today) throw new Error("실적 일정 미확인");
+      for (const symbol of pending) {
         earningsBySymbol.set(symbol, {
           asOf: payload.asOf,
+          event: payload.events?.[symbol],
+          verified: payload.coverage?.status === "complete",
           receivedAt: Date.now(),
-          status: payload.coverage?.status,
-          event: payload.events?.[providerSymbol(symbol)] ?? payload.events?.[symbol],
         });
       }
-    } catch {
-      symbols.forEach((symbol) => earningsBySymbol.set(symbol, {
-        asOf: marketDate.format(Date.now()), receivedAt: Date.now(), status: "unavailable",
-      }));
-    } finally {
-      symbols.forEach((symbol) => pendingEarnings.delete(symbol));
-      queueRender();
-    }
-  }
-
-  function refreshInputs(symbols, now, force) {
-    const date = marketDate.format(now);
-    const history = symbols.filter((symbol) => {
-      const entry = data.history(symbol);
-      const market = marketSessionAt(now, data.quote(symbol)?.data);
-      const sessionJustEnded = market.knownEnd && market.complete && entry?.data?.at(-1)?.time !== date;
-      const due = !entry || now - entry.receivedAt > (entry.failed || sessionJustEnded ? 60_000 : historyMaxAge);
-      return (force || due) && !data.historyPending(symbol);
-    });
-    for (let index = 0; index < history.length; index += 25) {
-      const batch = history.slice(index, index + 25).map(providerSymbol);
-      const query = new URLSearchParams({ symbols: batch.join(",") });
-      if (force || history.slice(index, index + 25).some((symbol) => {
-        const market = marketSessionAt(now, data.quote(symbol)?.data);
-        return market.knownEnd && market.complete && data.history(symbol)?.data?.at(-1)?.time !== date;
-      })) query.set("refresh", "true");
-      fetch(`/api/history?${query}`).catch(() => {});
-    }
-    const earnings = symbols.filter((symbol) => {
-      const record = earningsBySymbol.get(symbol);
-      const retry = record?.status === "complete" ? earningsMaxAge : 2 * 60 * 1000;
-      return !pendingEarnings.has(symbol) && (force || !record || record.asOf !== date || now - record.receivedAt >= retry);
-    });
-    if (earnings.length) void fetchEarnings(earnings);
-  }
-
-  function markLegacy(element) {
-    if (element) element.dataset.legacyWatchlistSignal = "";
-  }
-
-  function renderCard(card, symbol, model) {
-    card.dataset.watchlistSymbol = symbol;
-    card.dataset.swingTier = model.comment.tier;
-    card.setAttribute("aria-label", [symbol, priceText(model.price), model.verdict, "상세 열기"].join(" · "));
-    if (card.classList.contains("market-compact-card")) {
-      markLegacy(card.firstElementChild?.firstElementChild?.children[1]);
-      markLegacy(card.querySelector(":scope > .mt-2 > .mt-1.flex.justify-between")?.parentElement);
-      markLegacy(card.querySelector(":scope > div .overflow-hidden > div:first-child > span"));
-    } else if (card.classList.contains("market-action-card")) {
-      const header = card.children[1];
-      markLegacy(header?.firstElementChild?.firstElementChild?.children[1]);
-      markLegacy(header?.lastElementChild);
-      markLegacy(card.querySelector(":scope > .mt-3.flex.flex-wrap"));
-    } else {
-      markLegacy(card.children[1]?.querySelector("span.md\\:hidden"));
-      markLegacy(card.children[5]);
-    }
-    let status = card.querySelector(":scope > [data-swing-card-status]");
-    if (!status) {
-      status = document.createElement("span");
-      status.dataset.swingCardStatus = "";
-      card.append(status);
-    }
-    const label = model.quoteUsable ? model.verdict : `${model.verdict} · ${model.dataState}`;
-    if (status.textContent !== label) status.textContent = label;
-  }
-
-  function addPlanPanel(host, symbol, model) {
-    let panel = host.querySelector(":scope > [data-unified-swing]");
-    if (!panel) {
-      panel = document.createElement("section");
-      panel.dataset.unifiedSwing = "";
-      host.prepend(panel);
-    }
-    const signature = JSON.stringify([symbol, model.verdict, model.provenance, model.dataState, model.earnings.label, model.comment.reasons, model.plan?.detail, model.plan?.ratio, model.plan?.targetValue, model.historyUsable]);
-    if (panel.dataset.signature === signature) return;
-    panel.dataset.signature = signature;
-    panel.dataset.tier = model.comment.tier;
-    const expanded = panel.querySelector("details")?.open ?? false;
-    const headline = document.createElement("strong");
-    headline.className = "unified-swing-verdict";
-    headline.textContent = model.verdict;
-    const source = document.createElement("p");
-    source.className = "unified-swing-source";
-    source.textContent = [model.dataState, model.provenance].filter(Boolean).join(" · ");
-    const plan = model.historyUsable ? model.plan : null;
-    const levels = document.createElement("dl");
-    for (const [label, value] of [["진입 기준", plan?.entry], ["무효화 기준", plan?.stop], ["1차 목표", plan?.target], ["계획 손익비", plan?.ratio]]) {
-      const cell = document.createElement("div");
-      const term = document.createElement("dt");
-      const valueNode = document.createElement("dd");
-      term.textContent = label;
-      valueNode.textContent = value || "—";
-      cell.append(term, valueNode);
-      levels.append(cell);
-    }
-    const details = document.createElement("details");
-    details.open = expanded;
-    const summary = document.createElement("summary");
-    summary.textContent = "판정 근거";
-    const reasonList = document.createElement("ul");
-    for (const reason of [model.earnings.label, ...(model.comment.reasons || []), plan?.detail].filter(Boolean)) {
-      const item = document.createElement("li");
-      item.textContent = reason;
-      reasonList.append(item);
-    }
-    details.append(summary, reasonList);
-    panel.replaceChildren(headline, source, levels, details);
-  }
-
-  function findLabel(root, label) {
-    return [...root.querySelectorAll("div")].find((element) =>
-      !element.children.length && element.textContent.trim().toLowerCase() === label);
-  }
-
-  function renderDetails(now) {
-    for (const dialog of document.querySelectorAll('[role="dialog"][aria-label$=" 상세 보드"]')) {
-      const symbol = dialog.getAttribute("aria-label").replace(/ 상세 보드$/, "");
-      const model = modelBySymbol.get(symbol) || getModel(symbol, now);
-      const body = dialog.children[1];
-      if (!body) continue;
-      const header = findLabel(body, "single stock board")?.nextElementSibling;
-      header?.querySelectorAll(":scope > span.rounded-full:not(.bg-blue-50)").forEach(markLegacy);
-      const legacySwing = findLabel(body, "swing entry");
-      markLegacy(legacySwing?.parentElement?.parentElement?.parentElement);
-      const price = findLabel(body, "현재가");
-      markLegacy(price?.parentElement?.nextElementSibling);
-      if (price?.parentElement?.parentElement?.parentElement) {
-        addPlanPanel(price.parentElement.parentElement.parentElement, symbol, model);
+    } catch (_) {
+      // A missing event feed must never prevent price and trend data from rendering.
+      for (const symbol of pending) {
+        earningsBySymbol.set(symbol, { asOf: today, verified: false, receivedAt: Date.now() });
       }
     }
-    const chart = document.querySelector('.chart-stage [aria-label$=" 볼린저밴드 차트"]');
-    const stage = chart?.closest(".chart-stage");
-    if (!stage) return;
-    const symbol = chart.getAttribute("aria-label").replace(/ 볼린저밴드 차트$/, "");
-    const model = modelBySymbol.get(symbol) || getModel(symbol, now);
-    const decision = findLabel(stage, "종합판정");
-    markLegacy(decision?.parentElement?.parentElement?.parentElement);
-    const legacySwing = findLabel(stage, "swing entry");
-    markLegacy(legacySwing?.parentElement?.parentElement?.parentElement);
-    const header = findLabel(stage, "bollinger + max pain");
-    header?.nextElementSibling?.querySelectorAll(":scope > span.rounded-full").forEach(markLegacy);
-    if (header) addPlanPanel(header.parentElement.parentElement.parentElement, symbol, model);
-  }
+  };
 
-  function renderMarketState(models) {
-    const label = findLabel(document, "market mood bar");
-    const panel = label?.parentElement?.parentElement;
-    if (!panel) return;
-    [...panel.children].slice(0, 4).forEach((child, index) => { if (index && !child.hasAttribute("data-swing-market-state")) markLegacy(child); });
-    markLegacy(panel.nextElementSibling);
-    let value = panel.querySelector("[data-swing-market-state]");
-    if (!value) {
-      value = document.createElement("p");
-      value.dataset.swingMarketState = "";
-      panel.append(value);
-    }
-    const usable = models.filter((model) => model.quoteUsable);
-    const entry = usable.filter((model) => model.comment.tier === "entry").length;
-    const waiting = usable.filter((model) => model.comment.tier === "waiting").length;
-    const watch = usable.filter((model) => model.comment.tier === "watch").length;
-    const hold = models.length - entry - waiting - watch;
-    const nextText = !usable.length
-      ? "시세 확인 전 · 시장 판정 보류"
-      : `조건 충족 ${entry} · 진입 대기 ${waiting} · 관찰 ${watch} · 판정 보류 ${hold}`;
-    if (value.textContent !== nextText) value.textContent = nextText;
-  }
-
-  function notifyAlerts(alerts) {
-    if (!("Notification" in window) || Notification.permission !== "granted" ||
-        localStorage.getItem("nasdaq-watchlist:swing-notifications") !== "enabled") return;
-    for (const alert of alerts) {
-      if (notified.has(alert.key)) continue;
-      notified.add(alert.key);
-      try { new Notification(`${alert.symbol} ${alert.type}`, { body: alert.detail, tag: alert.key }); } catch {}
-    }
-  }
-
-  function renderAlerts(cards, alerts) {
-    const target = cards[0]?.parentElement;
-    if (!target) return;
-    let summary = document.querySelector("[data-unified-swing-alerts]");
-    if (!summary) {
-      summary = document.createElement("details");
-      summary.dataset.unifiedSwingAlerts = "";
-      summary.open = summaryOpen;
-      const label = document.createElement("summary");
-      label.textContent = "스윙 조건 알림";
-      const list = document.createElement("ul");
-      const enable = document.createElement("button");
-      enable.type = "button";
-      enable.textContent = "브라우저 알림 켜기";
-      enable.addEventListener("click", async () => {
-        if (!("Notification" in window)) {
-          enable.textContent = "이 브라우저는 알림 미지원";
-          return;
-        }
-        if (await Notification.requestPermission() === "granted") {
-          localStorage.setItem("nasdaq-watchlist:swing-notifications", "enabled");
-          queueRender();
-        } else {
-          enable.textContent = "브라우저 알림 미허용";
-        }
-      });
-      summary.addEventListener("toggle", () => { summaryOpen = summary.open; });
-      summary.append(label, list, enable);
-    }
-    if (summary.nextElementSibling !== target) target.before(summary);
-    const list = summary.querySelector("ul");
-    const texts = alerts.length ? alerts.map((alert) => `${alert.symbol} · ${alert.type} · ${alert.detail}`)
-      : ["확인된 새 조건이 없습니다."];
-    const signature = texts.join("\n");
-    if (list.dataset.signature !== signature) {
-      list.dataset.signature = signature;
-      list.replaceChildren(...texts.map((text) => {
-        const item = document.createElement("li");
-        item.textContent = text;
-        return item;
-      }));
-    }
-    if ("Notification" in window && Notification.permission === "granted" &&
-        localStorage.getItem("nasdaq-watchlist:swing-notifications") === "enabled") {
-      summary.querySelector("button").textContent = "브라우저 알림 사용 중";
-    }
-    notifyAlerts(alerts);
-  }
-
-  function render(force = false) {
-    const cards = [...document.querySelectorAll(cardSelector)];
-    const now = Date.now();
-    const cardSymbols = new Set(cards.map(getSymbol).filter(Boolean));
-    const symbols = new Set(cardSymbols);
-    for (const dialog of document.querySelectorAll('[role="dialog"][aria-label$=" 상세 보드"]')) {
-      symbols.add(dialog.getAttribute("aria-label").replace(/ 상세 보드$/, ""));
-    }
-    const chart = document.querySelector('.chart-stage [aria-label$=" 볼린저밴드 차트"]');
-    if (chart) symbols.add(chart.getAttribute("aria-label").replace(/ 볼린저밴드 차트$/, ""));
-    for (const symbol of symbols) modelBySymbol.set(symbol, getModel(symbol, now));
-    for (const card of cards) {
+  const renderTodaySwingBoard = (cards) => {
+    const existing = document.querySelector("[data-today-swing-board]");
+    const entryBySymbol = new Map();
+    cards.forEach((card) => {
       const symbol = getSymbol(card);
-      if (symbol) renderCard(card, symbol, modelBySymbol.get(symbol));
+      const rows = symbol && historyBySymbol.get(symbol);
+      if (!symbol || !rows || entryBySymbol.has(symbol)) return;
+      const setup = classifySwingSetup(rows);
+      const score = window.localSignalScore?.(rows) ?? 0;
+      const earnings = earningsStatus(symbol);
+      const swingPlan = makeSwingPlan(rows);
+      const session = getSessionStatus(rows, symbol);
+      const swingComment = swingPlan && buildSwingComment(swingPlan, setup, earnings, session);
+      entryBySymbol.set(symbol, { symbol, setup, score, earnings, swingPlan, swingComment, session });
+    });
+    const entries = [...entryBySymbol.values()];
+    const groups = [
+      { key: "entry", label: "규칙상 진입 조건 충족", color: "#166534", description: "진입·손익비·실적 조건을 모두 통과" },
+      { key: "waiting", label: "진입 대기", color: "#a16207", description: "셋업은 있으나 추가 조건 확인 필요" },
+      { key: "watch", label: "관찰", color: "#475569", description: "셋업은 보이나 현재 신규 진입 근거 부족" },
+    ].map((group) => ({
+      ...group,
+      items: entries.filter((entry) => entry.swingComment?.tier === group.key).sort((a, b) => b.score - a.score).slice(0, 5),
+    })).filter((group) => group.items.length);
+    if (!groups.length) {
+      existing?.remove();
+      return;
     }
-    const models = [...cardSymbols].map((symbol) => modelBySymbol.get(symbol));
-    renderMarketState(models);
-    renderDetails(now);
-    renderAlerts(cards, models.flatMap((model) => model.alerts).slice(0, 8));
-    window.NasdaqWatchlistHome?.render(modelBySymbol);
-    refreshInputs([...symbols], now, force);
-  }
+    const dataStatus = historyUnavailable
+      ? "시세 이력 조회 실패 · 기존 화면 값만 참고"
+      : historyAsOf
+        ? `이력 조회 ${historyAsOf.toLocaleTimeString("ko-KR", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" })} ET · 장중 일봉은 최종 진입에서 제외`
+        : "시세 이력 확인 중";
+    const board = existing || document.createElement("section");
+    board.dataset.todaySwingBoard = "";
+    board.style.cssText = "grid-column:1/-1;margin:0 0 12px;border:1px solid #bfdbfe;border-radius:16px;background:linear-gradient(135deg,#eff6ff,#fff);padding:12px;box-shadow:0 8px 22px rgba(15,23,42,.06)";
+    board.innerHTML = `<div style="margin-bottom:9px"><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#1d4ed8">TODAY'S SWING CANDIDATES</div><div style="margin-top:2px;font-size:11px;font-weight:800;color:#475569">전체 50개 중 셋업이 확인된 종목만 요약 · 카드와 동일한 목표·손익비 기준</div><div style="margin-top:3px;font-size:9px;font-weight:800;color:${historyUnavailable ? "#be123c" : "#64748b"}">${dataStatus}</div></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:7px">${groups.map((group) => `<div style="border-radius:10px;background:#fff;padding:8px"><div style="margin-bottom:3px;font-size:10px;font-weight:950;color:${group.color}">${group.label}</div><div style="margin-bottom:6px;font-size:8px;font-weight:800;color:#64748b">${group.description}</div>${group.items.map((entry) => `<div style="display:grid;gap:3px;padding:5px 0;border-top:1px solid #f1f5f9"><div style="display:flex;align-items:center;justify-content:space-between;gap:5px"><span style="font-size:11px;font-weight:950;color:#0f172a">${entry.symbol}</span><span style="font-size:9px;font-weight:900;color:${entry.swingPlan?.ratioColor || "#64748b"}">${entry.swingPlan?.ratio || "R:R 확인 중"}</span><span style="font-size:9px;font-weight:900;color:#2563eb">${entry.score}점</span></div><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:850;color:#475569;white-space:nowrap">${entry.setup.label} · ${entry.earnings.label}</span><span style="overflow:hidden;text-overflow:ellipsis;font-size:9px;font-weight:900;color:${entry.swingComment?.color || "#64748b"};white-space:nowrap" title="${entry.swingComment?.reasons.join(" ") || "스윙 계획 계산 중"}">${entry.swingComment ? `판단 · ${entry.swingComment.verdict}` : "판단 · 계획 확인 중"}</span></div>`).join("")}</div>`).join("")}</div>`;
+    const cardContainer = cards[0]?.parentElement;
+    if (!existing && cardContainer) cardContainer.before(board);
+  };
 
-  function queueRender() {
-    if (refreshTimer) return;
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null;
-      render();
-    }, 120);
-  }
+  const notifiedAlerts = new Set();
+  let swingSummaryOpen = false;
+  let enhanceInFlight = false;
+  const notificationsArmed = () => window.localStorage.getItem("nasdaq-watchlist:swing-notifications") === "enabled";
 
-  window.NasdaqWatchlistView = { quoteState, model: (symbol) => modelBySymbol.get(symbol) };
-  window.addEventListener("nasdaq-watchlist:data", queueRender);
-  document.addEventListener("click", (event) => {
-    if (event.target.closest("button")?.textContent.trim() === "새로고침") {
-      setTimeout(() => render(true), 200);
+  const notifySwingAlerts = (alerts) => {
+    if (!("Notification" in window) || Notification.permission !== "granted" || !notificationsArmed()) return;
+    alerts.forEach((alert) => {
+      if (notifiedAlerts.has(alert.key)) return;
+      notifiedAlerts.add(alert.key);
+      new Notification(`스윙 알림 · ${alert.symbol}`, { body: `${alert.type} — ${alert.detail}` });
+    });
+  };
+
+  const collectSwingAlerts = (cards) => {
+    const seen = new Set();
+    const alerts = [];
+    cards.forEach((card) => {
+      const symbol = getSymbol(card);
+      const rows = symbol && historyBySymbol.get(symbol);
+      if (!symbol || !rows || seen.has(symbol)) return;
+      seen.add(symbol);
+      const swingPlan = makeSwingPlan(rows);
+      if (!swingPlan) return;
+      const close = swingPlan.latestClose;
+      const earnings = earningsStatus(symbol);
+      const session = getSessionStatus(rows, symbol);
+      if (!session.inProgress && !session.unverified) {
+        const key = `${symbol}-${rows.at(-1)?.time}`;
+        if (Number.isFinite(swingPlan.stopValue) && close < swingPlan.stopValue) alerts.push({ key: `${key}-stop`, symbol, type: "손절 기준 이탈", detail: `종가가 카드의 무효화 기준 ${swingPlan.stop} 아래입니다.`, color: "#be123c" });
+        else if (Number.isFinite(swingPlan.targetValue) && close >= swingPlan.targetValue) alerts.push({ key: `${key}-target`, symbol, type: "1차 목표 도달", detail: `카드의 ${swingPlan.targetSource} 목표 ${swingPlan.target}에 도달했습니다.`, color: "#166534" });
+        else if (Number.isFinite(swingPlan.entryValue) && close > swingPlan.entryValue) alerts.push({ key: `${key}-breakout`, symbol, type: "전일 고점 돌파", detail: `카드의 진입 기준 ${swingPlan.entry}을 넘었습니다.`, color: "#1d4ed8" });
+      }
+      if (earnings.label.startsWith("실적 D-0") || earnings.label.startsWith("실적 D-1") || earnings.label.startsWith("실적 D-2")) {
+        alerts.push({ key: `${symbol}-earnings-${earnings.label}`, symbol, type: earnings.label, detail: "실적 임박 구간 — 신규 스윙 진입은 보수적으로 검토합니다.", color: "#be123c" });
+      }
+    });
+    return alerts.slice(0, 8);
+  };
+
+  const renderSwingAlerts = (cards) => {
+    const alerts = collectSwingAlerts(cards);
+    const existing = document.querySelector("[data-swing-alert-board]");
+    const board = existing || document.createElement("section");
+    board.dataset.swingAlertBoard = "";
+    board.style.cssText = "grid-column:1/-1;margin:0 0 10px;border:1px solid #fde68a;border-radius:16px;background:#fffbeb;padding:11px";
+    const notificationEnabled = "Notification" in window && Notification.permission === "granted" && notificationsArmed();
+    board.innerHTML = `<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:${alerts.length ? "8px" : "0"}"><div><div style="font-size:11px;font-weight:950;letter-spacing:.08em;color:#92400e">SWING ALERTS</div><div style="margin-top:2px;font-size:10px;font-weight:800;color:#78716c">조건 충족 알림 · 매매 지시 아님</div></div><button type="button" data-enable-swing-notifications style="border:1px solid #fcd34d;border-radius:999px;background:#fff;padding:5px 8px;color:#92400e;font-size:10px;font-weight:950;white-space:nowrap">${notificationEnabled ? "브라우저 알림 사용 중" : "브라우저 알림 켜기"}</button></div>${alerts.length ? `<div style="display:grid;gap:5px">${alerts.map((alert) => `<div style="display:flex;align-items:center;gap:6px;border-radius:8px;background:#fff;padding:6px"><strong style="min-width:42px;color:#0f172a;font-size:10px">${alert.symbol}</strong><span style="font-size:10px;font-weight:950;color:${alert.color}">${alert.type}</span><span style="overflow:hidden;text-overflow:ellipsis;color:#64748b;font-size:9px;white-space:nowrap">${alert.detail}</span></div>`).join("")}</div>` : `<div style="color:#78716c;font-size:10px;font-weight:800">현재 새로 충족된 조건이 없습니다.</div>`}`;
+    const enableButton = board.querySelector("[data-enable-swing-notifications]");
+    enableButton?.addEventListener("click", async () => {
+      if (!("Notification" in window)) {
+        enableButton.textContent = "이 브라우저는 미지원";
+        return;
+      }
+      const permission = await Notification.requestPermission();
+      if (permission === "granted") {
+        window.localStorage.setItem("nasdaq-watchlist:swing-notifications", "enabled");
+        enableButton.textContent = "브라우저 알림 사용 중";
+        notifySwingAlerts(alerts);
+      } else {
+        enableButton.textContent = "브라우저 알림 미허용";
+      }
+    }, { once: true });
+    notifySwingAlerts(alerts);
+    const cardContainer = cards[0]?.parentElement;
+    const candidatesBoard = document.querySelector("[data-today-swing-board]");
+    if (!existing && candidatesBoard) candidatesBoard.before(board);
+    else if (!existing && cardContainer) cardContainer.before(board);
+  };
+
+  const applySwingSummaryVisibility = () => {
+    document.querySelectorAll("[data-today-swing-board], [data-swing-alert-board]").forEach((board) => {
+      board.style.display = swingSummaryOpen ? "block" : "none";
+    });
+    const toggle = document.querySelector("[data-swing-summary-toggle]");
+    if (toggle) {
+      toggle.textContent = swingSummaryOpen ? "스윙 요약 닫기" : "스윙 요약";
+      toggle.setAttribute("aria-expanded", String(swingSummaryOpen));
+      toggle.style.background = swingSummaryOpen ? "#1d4ed8" : "#eff6ff";
+      toggle.style.color = swingSummaryOpen ? "#fff" : "#1d4ed8";
+      toggle.style.borderColor = swingSummaryOpen ? "#1d4ed8" : "#bfdbfe";
     }
-  });
+  };
+
+  const installSwingSummaryToggle = () => {
+    const todayButton = [...document.querySelectorAll("button")].find((button) => button.textContent.trim().startsWith("오늘의 5종목"));
+    const summaryBoard = document.querySelector("[data-today-swing-board]");
+    if ((!todayButton && !summaryBoard) || document.querySelector("[data-swing-summary-toggle]")) return;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.dataset.swingSummaryToggle = "";
+    toggle.style.cssText = `${todayButton ? "margin-left:8px" : "grid-column:1/-1;width:max-content;margin:0 0 10px"};border:1px solid #bfdbfe;border-radius:999px;padding:7px 10px;font-size:11px;font-weight:950;line-height:1;white-space:nowrap`;
+    toggle.addEventListener("click", () => {
+      swingSummaryOpen = !swingSummaryOpen;
+      applySwingSummaryVisibility();
+    });
+    if (todayButton) todayButton.after(toggle);
+    else summaryBoard.before(toggle);
+    applySwingSummaryVisibility();
+  };
+
+  const enhance = async () => {
+    if (enhanceInFlight) return;
+    enhanceInFlight = true;
+    try {
+      const compactCards = [...document.querySelectorAll("button.market-compact-card")];
+      const actionCards = [...document.querySelectorAll("button.market-action-card")];
+      const summaryCards = compactCards.length ? compactCards : actionCards;
+      if (!summaryCards.length || !window.localSignalScore) return;
+      const earningsRequest = fetchEarnings(summaryCards.map(getSymbol).filter(Boolean));
+      const required = [];
+      for (const card of summaryCards) {
+        const symbol = getSymbol(card);
+        if (!symbol) continue;
+        const rows = historyBySymbol.get(symbol);
+        if (rows) renderCard(card, symbol, rows);
+        const check = historyChecks.get(symbol);
+        const retryAfter = check?.valid ? 15 * 60_000 : 2 * 60_000;
+        if ((!check || Date.now() - check.at >= retryAfter) && !pendingSymbols.has(symbol)) required.push(symbol);
+      }
+      for (let start = 0; start < required.length; start += 12) await fetchHistory(required.slice(start, start + 12));
+      await earningsRequest;
+      for (const card of compactCards) {
+        const symbol = getSymbol(card);
+        const rows = symbol && historyBySymbol.get(symbol);
+        if (rows) renderCard(card, symbol, rows);
+      }
+      renderTodaySwingBoard(summaryCards);
+      renderSwingAlerts(summaryCards);
+      installSwingSummaryToggle();
+      applySwingSummaryVisibility();
+    } finally {
+      enhanceInFlight = false;
+    }
+  };
+
+  setTimeout(enhance, 1800);
+  setInterval(enhance, 30000);
   const root = document.getElementById("root");
-  new MutationObserver((changes) => {
-    if (changes.some(({ addedNodes, removedNodes }) => [...addedNodes, ...removedNodes].some((node) =>
-      node instanceof Element && (node.matches(`${cardSelector}, [role="dialog"], .chart-stage`) ||
-        node.querySelector(`${cardSelector}, [role="dialog"], .chart-stage`))))) queueRender();
-  }).observe(root, { childList: true, subtree: true });
-  setInterval(queueRender, 5000);
-  queueRender();
+  if (root) {
+    let toggleRefreshQueued = false;
+    new MutationObserver(() => {
+      if (toggleRefreshQueued) return;
+      toggleRefreshQueued = true;
+      setTimeout(() => {
+        toggleRefreshQueued = false;
+        installSwingSummaryToggle();
+        applySwingSummaryVisibility();
+      }, 0);
+    }).observe(root, { childList: true, subtree: true });
+  }
+})();
+
+/* Keep the detailed board controls, without a duplicate quick-filter row above them. */
+(() => {
+  const setupFilterBar = () => {
+    const signalMenu = document.querySelector('select[aria-label="보드 신호 필터"]');
+    const sortMenu = document.querySelector('select[aria-label="보드 정렬"]');
+    const categoryMenu = document.querySelector('select[aria-label="카테고리 바로 선택"]');
+    if (!signalMenu || !sortMenu || !categoryMenu) return false;
+    const panel = signalMenu.parentElement;
+    if (!panel || panel.dataset.filterPanel) return true;
+    const categorySection = categoryMenu.closest("section");
+    if (categorySection) categorySection.style.display = "none";
+    panel.dataset.filterPanel = "true";
+    panel.style.display = "grid";
+    panel.style.marginTop = "8px";
+    const categoryPicker = categoryMenu.cloneNode(true);
+    categoryPicker.removeAttribute("aria-label");
+    categoryPicker.style.cssText = "width:100%;border:1px solid #cbd5e1;border-radius:10px;background:#fff;padding:8px;font-size:12px;font-weight:800;color:#334155";
+    categoryPicker.addEventListener("change", () => {
+      categoryMenu.value = categoryPicker.value;
+      categoryMenu.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    categoryMenu.addEventListener("change", () => { categoryPicker.value = categoryMenu.value; });
+    panel.prepend(categoryPicker);
+    return true;
+  };
+  setTimeout(setupFilterBar, 1400);
+  setInterval(setupFilterBar, 30000);
 })();
 
 /* Keep the useful controls, but remove the decorative title block from the header. */
@@ -503,6 +725,20 @@
 /* Dashboard reading aids: clear signal hierarchy, market freshness, a compact
    market-tape mode, and a one-glance summary above the selected detail chart. */
 (() => {
+  const nySessionStatus = () => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date());
+    const value = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+    const minutes = Number(value.hour) * 60 + Number(value.minute);
+    const isWeekday = !["Sat", "Sun"].includes(value.weekday);
+    return isWeekday && minutes >= 570 && minutes < 960 ? "미국 장중" : "미국 장 마감";
+  };
+
   const setupMarketTape = () => {
     const tape = document.querySelector("[data-market-tape]");
     if (!tape) return;
@@ -517,11 +753,12 @@
       freshness.style.cssText = "flex:0 0 auto;color:#64748b;font-size:10px;font-weight:850;white-space:nowrap";
       shell.append(freshness);
     }
-    const status = window.NasdaqWatchlistView.quoteState("QQQ");
-    freshness.textContent = status.usable
-      ? `QQQ 기준 · ${status.provenance}`
-      : `QQQ · ${status.label}`;
-    freshness.title = status.provenance;
+    const quote = window.NasdaqWatchlistData?.quote("QQQ");
+    const timestamp = Date.parse(quote?.data?.asOf);
+    const time = Number.isFinite(timestamp)
+      ? new Date(timestamp).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+    const freshnessText = time ? `QQQ ${quote.failed || quote.data.stale ? "이전" : "기준"} ${time} KST` : "시세 시각 미확인";
+    freshness.textContent = `${nySessionStatus()} · ${freshnessText}`;
 
     let toggle = tape.querySelector("[data-market-toggle]");
     if (!toggle) {
@@ -546,6 +783,34 @@
     toggle.setAttribute("aria-expanded", String(!collapsed));
   };
 
+  const metricText = (label) => {
+    const labelNode = [...document.querySelectorAll("div")].find((node) => node.textContent.trim() === label);
+    const metricCard = labelNode?.parentElement;
+    return metricCard?.querySelector(".text-xl")?.textContent?.trim() || "-";
+  };
+
+  const setupDetailSummary = () => {
+    const chart = document.querySelector('[aria-label$="볼린저밴드 차트"]');
+    if (!chart) return;
+    const symbol = chart.getAttribute("aria-label")?.replace(/ 볼린저밴드 차트$/, "") || "선택 종목";
+    const card = [...document.querySelectorAll(".market-compact-card")].find((item) => item.textContent.includes(symbol));
+    const status = card?.querySelector("[data-signal-status]")?.textContent?.trim() || "신호 확인 중";
+    const detail = card?.querySelector("[data-signal-reason]")?.dataset.reasonDetail || "지표를 확인 중입니다.";
+    const reason = detail.split(" · ").slice(1, 3).join(" · ") || detail;
+    const lower = metricText("하단까지");
+    const upper = metricText("상단까지");
+    const host = chart.parentElement;
+    if (!host) return;
+    let summary = host.parentElement?.querySelector("[data-detail-summary]");
+    if (!summary) {
+      summary = document.createElement("section");
+      summary.dataset.detailSummary = "";
+      summary.style.cssText = "display:grid;gap:6px;margin:0 0 12px;padding:12px 14px;border:1px solid #dbeafe;border-radius:14px;background:linear-gradient(135deg,#f8fbff,#fff);color:#0f172a";
+      host.before(summary);
+    }
+    summary.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><strong style="font-size:14px">${symbol} 한눈에 보기</strong><span style="border-radius:999px;background:#e2e8f0;padding:4px 8px;color:#334155;font-size:12px;font-weight:900">${status}</span></div><div style="font-size:13px;font-weight:750;color:#475569">핵심 흐름 · ${reason}</div><div style="font-size:13px;font-weight:750;color:#475569">주의 가격대 · BB 하단 ${lower} / 상단 ${upper}</div>`;
+  };
+
   const addSvg = (tag, attributes, text) => {
     const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
     Object.entries(attributes).forEach(([name, value]) => element.setAttribute(name, String(value)));
@@ -567,13 +832,11 @@
     });
 
     chart.querySelector("[data-entry-guides]")?.remove();
-    const symbol = chart.getAttribute("aria-label")?.replace(/ 볼린저밴드 차트$/, "");
-    const model = window.NasdaqWatchlistView.model(symbol);
-    const plan = model?.historyUsable ? model.plan : null;
+    const chartText = chart.closest(".min-w-0")?.innerText || "";
     const levels = [
-      { key: "진입", color: "#2563eb", value: plan?.entryValue },
-      { key: "목표", color: "#7c3aed", value: plan?.targetValue },
-      { key: "무효화", color: "#e11d48", value: plan?.stopValue },
+      { key: "1차", color: "#2563eb", value: Number(chartText.match(/1차\s*\$([\d,.]+)/)?.[1]?.replace(/,/g, "")) },
+      { key: "2차", color: "#7c3aed", value: Number(chartText.match(/2차\s*\$([\d,.]+)/)?.[1]?.replace(/,/g, "")) },
+      { key: "주의", color: "#e11d48", value: Number(chartText.match(/주의\s*\$([\d,.]+)/)?.[1]?.replace(/,/g, "")) },
     ].filter((level) => Number.isFinite(level.value));
     const axis = [...chart.querySelectorAll("g")].map((group) => {
       const line = group.querySelector("line");
@@ -598,9 +861,30 @@
     chart.append(group);
   };
 
+  const setupTodayReason = () => {
+    const board = [...document.querySelectorAll("button")].find((button) => button.textContent.includes("SIGNAL BOARD · M7 & MARKET"));
+    if (!board) return;
+    const cards = [...document.querySelectorAll(".market-compact-card")];
+    const card = cards.find((item) => [...item.querySelectorAll("strong,div")].some((node) => /^[A-Z.]{1,6}$/.test(node.textContent.trim()) && board.textContent.includes(node.textContent.trim())));
+    if (!card) return;
+    const status = card.querySelector("[data-signal-status]")?.textContent?.trim();
+    const reason = card.querySelector("[data-signal-reason-text]")?.textContent?.replace(/^\s*·\s*/, "").trim();
+    if (!status || !reason) return;
+    let note = board.querySelector("[data-today-reason]");
+    if (!note) {
+      note = document.createElement("span");
+      note.dataset.todayReason = "";
+      note.style.cssText = "display:block;margin-top:4px;color:#94a3b8;font-size:10px;font-weight:800";
+      board.append(note);
+    }
+    note.textContent = `선정 포인트 · ${status} / ${reason}`;
+  };
+
   const enhanceDashboard = () => {
     setupMarketTape();
+    setupDetailSummary();
     setupChartGuides();
+    setupTodayReason();
   };
   setTimeout(enhanceDashboard, 2200);
   setTimeout(enhanceDashboard, 6000);
@@ -623,12 +907,12 @@
 
   const quoteFor = (item) => item.symbols.map((symbol) => quotes[symbol]).find(Boolean);
   const formatValue = (item, value) => {
-    if (!Number.isFinite(value)) return "데이터 대기";
+    if (!Number.isFinite(Number(value))) return "데이터 대기";
     const text = Number(value).toLocaleString("en-US", { minimumFractionDigits: item.digits, maximumFractionDigits: item.digits });
     return text;
   };
   const movement = (change) => {
-    if (!Number.isFinite(change)) return { text: "—", color: "#64748b", background: "#f1f5f9" };
+    if (!Number.isFinite(Number(change))) return { text: "—", color: "#64748b", background: "#f1f5f9" };
     const value = Number(change);
     return value > 0.03
       ? { text: `▲ +${value.toFixed(2)}%`, color: "#047857", background: "#d1fae5" }
@@ -776,10 +1060,15 @@
     { name: "부동산", symbols: [] },
     { name: "소재", symbols: [] }
   ];
-  const sectorTicker = (card) => window.NasdaqWatchlistHome.tickerForCard(card);
+  const sectorSymbols = new Set(sectors.flatMap((sector) => sector.symbols));
+  const sectorTicker = (card) => {
+    const logoTicker = card.querySelector("img[alt$=' logo']")?.alt?.replace(/ logo$/, "");
+    if (logoTicker) return logoTicker;
+    return (card.textContent.match(/\b[A-Z][A-Z.]{0,5}\b/g) || []).find((ticker) => sectorSymbols.has(ticker)) || "";
+  };
   const sectorChange = (card) => {
-    const status = window.NasdaqWatchlistView.quoteState(sectorTicker(card));
-    return status.usable ? status.quote.changePercent : null;
+    const quote = window.NasdaqWatchlistData?.quote(sectorTicker(card));
+    return !quote?.failed && !quote?.data?.stale ? quote?.data?.changePercent : null;
   };
 
   const setupSectorFlow = () => {
@@ -808,7 +1097,7 @@
       const group = cards.filter((card) => sector.symbols.includes(sectorTicker(card)));
       const changes = group.map(sectorChange).filter(Number.isFinite);
       const averageChange = changes.length
-        ? changes.reduce((total, value) => total + value, 0) / changes.length
+        ? changes.reduce((total, change) => total + change, 0) / changes.length
         : null;
       const state = averageChange == null
         ? { symbol: "—", label: group.length ? "시세 미확인" : "해당 없음", color: "#94a3b8", bg: "#f1f5f9" }
@@ -821,8 +1110,8 @@
       button.type = "button";
       button.textContent = `${sector.name} ${state.symbol} ${state.label}`;
       button.title = averageChange == null
-        ? (group.length ? "유효한 시세를 받지 못했습니다." : `${sector.name} 섹터 종목은 현재 TOP50에 없습니다.`)
-        : `${sector.name} 보드 내 ${changes.length}/${group.length}종목 평균 ${averageChange >= 0 ? "+" : ""}${averageChange.toFixed(1)}%`;
+        ? group.length ? `${sector.name} 섹터 시세 미확인` : `${sector.name} 섹터 종목은 현재 보드에 없습니다.`
+        : `${sector.name} 보드 내 시세 확인 ${changes.length}종목 평균 ${averageChange >= 0 ? "+" : ""}${averageChange.toFixed(1)}%`;
       button.disabled = !group.length;
       button.style.cssText = `min-width:0;min-height:38px;border:0;border-radius:9px;background:${state.bg};color:${state.color};padding:7px 6px;font-size:10px;font-weight:950;line-height:1.15;cursor:${group.length ? "pointer" : "not-allowed"};white-space:normal;text-align:center;opacity:${group.length ? "1" : ".72"}`;
       button.addEventListener("click", () => {
@@ -830,8 +1119,8 @@
       });
       flow.append(button);
     });
-    const radarTitle = description.parentElement.firstElementChild;
-    const capTitle = radarTitle?.nextElementSibling;
+    const radarTitle = [...document.querySelectorAll("*")].find((element) => element.textContent.trim() === "MARKET CAP RADAR");
+    const capTitle = [...document.querySelectorAll("*")].find((element) => element.textContent.trim() === "미국 시총 TOP50");
     let compactHeader = document.querySelector("[data-radar-compact]");
     if (!compactHeader) {
       if (!document.querySelector("[data-radar-compact-style]")) {
@@ -844,7 +1133,7 @@
       compactHeader.dataset.radarCompact = "";
       const titleStack = document.createElement("div");
       titleStack.style.cssText = "display:flex;flex-direction:column;gap:3px;min-width:0";
-      titleStack.innerHTML = '<strong style="font-size:18px;font-weight:950;color:#0f172a" data-cap-title></strong><small data-cap-status style="color:#bfdbfe;font-size:11px"></small>';
+      titleStack.innerHTML = '<span style="font-size:10px;font-weight:950;letter-spacing:.1em;color:#64748b">MARKET CAP RADAR</span><strong style="font-size:18px;font-weight:950;color:#0f172a">미국 시총 TOP50</strong>';
       compactHeader.append(titleStack, flow);
       description.before(compactHeader);
       flow.style.margin = "0";
@@ -852,12 +1141,6 @@
       if (!compactHeader.contains(flow)) compactHeader.append(flow);
       flow.style.margin = "0";
     }
-    compactHeader.querySelector("[data-cap-title]").textContent = capTitle?.textContent || "미국 시총 순위";
-    compactHeader.querySelector("[data-cap-status]").textContent = {
-      loading: "시총 순위 확인 중",
-      stale: "최근 저장 순위 표시",
-      fallback: "시총 순위 조회 실패 · 기본 목록",
-    }[window.NasdaqWatchlistData.marketCapStatus()] || "";
     [radarTitle, capTitle, description].filter(Boolean).forEach((element) => { element.style.display = "none"; });
     return true;
   };
