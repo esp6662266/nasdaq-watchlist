@@ -1,4 +1,9 @@
-const SOURCE_URL = "https://stockanalysis.com/list/biggest-companies/";
+const PUBLIC_API_HEADERS = {
+  "content-type": "application/json; charset=utf-8",
+  "access-control-allow-origin": "https://esp6662266.github.io",
+};
+
+const SOURCE_URL = "https://stockanalysis.com/list/largest-us-companies/?count=200";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 let cache = null;
 
@@ -29,15 +34,17 @@ function parseRows(html) {
   const trMatches = html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi);
 
   for (const trMatch of trMatches) {
-    const cells = [...trMatch[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((match) => stripTags(match[1]));
-    if (cells.length < 3 || !/^\d+$/.test(cells[0])) continue;
+    const [rankCell, companyCell] = [...trMatch[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
+    const rankText = stripTags(rankCell?.[1]);
+    if (!/^\d+$/.test(rankText) || !companyCell) continue;
 
-    const rank = Number(cells[0]);
-    const symbol = normalizeSymbol(cells[1]);
-    const name = cells[2];
-    if (!Number.isFinite(rank) || !symbol || !name) continue;
+    const company = companyCell[1];
+    const ticker = company.match(/<div\b[^>]*class="[^"]*\btext-faded\b[^"]*"[^>]*>\s*([A-Z0-9.-]+)\s*<\/div>/i)?.[1];
+    const symbol = normalizeSymbol(ticker);
+    const name = stripTags(company.match(/<div\b[^>]*\btitle="([^"]+)"/i)?.[1]);
+    if (!symbol || !name) continue;
 
-    rows.push({ rank, symbol, name });
+    rows.push({ rank: Number(rankText), symbol, name });
   }
 
   return rows;
@@ -72,7 +79,7 @@ export async function handler(event) {
   if (event.httpMethod !== "GET") {
     return {
       statusCode: 405,
-      headers: { "content-type": "application/json; charset=utf-8" },
+      headers: PUBLIC_API_HEADERS,
       body: JSON.stringify({ ok: false, error: "Method not allowed" }),
     };
   }
@@ -82,7 +89,7 @@ export async function handler(event) {
     return {
       statusCode: 200,
       headers: {
-        "content-type": "application/json; charset=utf-8",
+        ...PUBLIC_API_HEADERS,
         "cache-control": "public, max-age=3600, stale-while-revalidate=86400",
       },
       body: JSON.stringify({ ok: true, data: { ...cache.value, cached: true } }),
@@ -95,7 +102,7 @@ export async function handler(event) {
     return {
       statusCode: 200,
       headers: {
-        "content-type": "application/json; charset=utf-8",
+        ...PUBLIC_API_HEADERS,
         "cache-control": "public, max-age=3600, stale-while-revalidate=86400",
       },
       body: JSON.stringify({ ok: true, data: value }),
@@ -104,14 +111,14 @@ export async function handler(event) {
     if (cache) {
       return {
         statusCode: 200,
-        headers: { "content-type": "application/json; charset=utf-8" },
+        headers: PUBLIC_API_HEADERS,
         body: JSON.stringify({ ok: true, data: { ...cache.value, cached: true, stale: true } }),
       };
     }
 
     return {
       statusCode: 502,
-      headers: { "content-type": "application/json; charset=utf-8" },
+      headers: PUBLIC_API_HEADERS,
       body: JSON.stringify({ ok: false, error: error.message || "Market cap lookup failed" }),
     };
   }

@@ -1,0 +1,193 @@
+/* The personal list uses the board's existing blue and slate palette. */
+.watchlist-home {
+  --watchlist-text: #0f172a;
+  --watchlist-muted: #475569;
+  --watchlist-line: #dbe4f0;
+  --watchlist-blue: #1d4ed8;
+  --watchlist-active: #eff6ff;
+  max-width: 80rem;
+  padding: 0.875rem 0.75rem 1rem;
+  margin: 0 auto;
+  color: var(--watchlist-text);
+}
+
+.watchlist-home-panel {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--watchlist-line);
+  border-radius: 1rem;
+  background: #fff;
+}
+
+.watchlist-home-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.watchlist-home-title {
+  font-size: clamp(1.25rem, 2.4vw, 1.6rem);
+  font-weight: 850;
+  letter-spacing: -0.035em;
+}
+
+.watchlist-home-tabs {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.watchlist-home-tabs button,
+.watchlist-home-search,
+.watchlist-home-star {
+  min-height: 44px;
+  border: 1px solid var(--watchlist-line, #dbe4f0);
+  border-radius: 0.55rem;
+  background: #fff;
+}
+
+.watchlist-home-tabs button {
+  padding: 0.4rem 0.7rem;
+  font-size: 0.84rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.watchlist-home-tabs button[aria-pressed="true"] {
+  color: #fff;
+  background: var(--watchlist-blue);
+  border-color: var(--watchlist-blue);
+}
+
+.watchlist-home-search {
+  width: min(100%, 24rem);
+  padding: 0.45rem 0.65rem;
+}
+
+.watchlist-home-status,
+.watchlist-home-notice {
+  color: var(--watchlist-muted);
+  font-size: 0.82rem;
+}
+
+.watchlist-home-notice:empty,
+.watchlist-home-list:empty,
+.watchlist-home-search[hidden] {
+  display: none;
+}
+
+.watchlist-home-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-top: 1px solid var(--watchlist-line);
+}
+
+.watchlist-home-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  gap: 0.5rem;
+  align-items: center;
+  border-bottom: 1px solid var(--watchlist-line);
+}
+
+.watchlist-home-detail {
+  display: grid;
+  grid-template-columns: minmax(5rem, 1.1fr) minmax(4.5rem, 0.65fr) minmax(8rem, 1.2fr);
+  align-items: center;
+  column-gap: clamp(0.4rem, 2vw, 1.5rem);
+  min-height: 64px;
+  padding: 0.5rem 0.3rem;
+  border-radius: 0.5rem;
+  text-align: left;
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.watchlist-home-detail:hover {
+  background: var(--watchlist-active);
+}
+
+.watchlist-home-detail > span {
+  min-width: 0;
+}
+
+.watchlist-home-detail > span > span {
+  display: block;
+  color: var(--watchlist-muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.watchlist-home-company {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watchlist-home-detail .watchlist-home-quote {
+  text-align: right;
+}
+
+.watchlist-home-detail [data-tone="up"] {
+  color: #b91c1c;
+}
+
+.watchlist-home-detail [data-tone="down"] {
+  color: #1d4ed8;
+}
+
+.watchlist-home-star {
+  color: #475569;
+  min-width: 44px;
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.watchlist-home-star[aria-pressed="true"] {
+  color: #92400e;
+  background: #fffbeb;
+  border-color: #f5d495;
+}
+
+.watchlist-home-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.4rem 0.8rem;
+}
+
+[data-watchlist-mode="personal"] > [data-watchlist-market],
+[data-watchlist-mode="personal"][data-watchlist-chart-open="false"] > [data-watchlist-chart] {
+  display: none !important;
+}
+
+@media (min-width: 640px) {
+  .watchlist-home {
+    padding-inline: 1.25rem;
+  }
+}
+
+@media (max-width: 560px) {
+  .watchlist-home-panel {
+    padding: 0.8rem;
+  }
+
+  .watchlist-home-tabs {
+    width: 100%;
+  }
+
+  .watchlist-home-tabs button {
+    flex: 1;
+  }
+
+  .watchlist-home-detail {
+    grid-template-columns: minmax(0, 1fr) minmax(4.4rem, auto);
+    row-gap: 0.25rem;
+  }
+
+  .watchlist-home-decision {
+    grid-column: 1 / -1;
+  }
+}

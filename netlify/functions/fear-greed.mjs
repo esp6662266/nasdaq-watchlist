@@ -1,3 +1,8 @@
+const PUBLIC_API_HEADERS = {
+  "content-type": "application/json; charset=utf-8",
+  "access-control-allow-origin": "https://esp6662266.github.io",
+};
+
 const API_URL = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata";
 const CACHE_TTL_MS = 60 * 60 * 1000;
 let cache = null;
@@ -88,7 +93,7 @@ export async function handler(event) {
   if (event.httpMethod !== "GET") {
     return {
       statusCode: 405,
-      headers: { "content-type": "application/json; charset=utf-8" },
+      headers: PUBLIC_API_HEADERS,
       body: JSON.stringify({ ok: false, error: "Method not allowed" }),
     };
   }
@@ -98,7 +103,7 @@ export async function handler(event) {
     return {
       statusCode: 200,
       headers: {
-        "content-type": "application/json; charset=utf-8",
+        ...PUBLIC_API_HEADERS,
         "cache-control": "public, max-age=900, stale-while-revalidate=3600",
       },
       body: JSON.stringify({ ok: true, data: { ...cache.value, cached: true } }),
@@ -111,7 +116,7 @@ export async function handler(event) {
     return {
       statusCode: 200,
       headers: {
-        "content-type": "application/json; charset=utf-8",
+        ...PUBLIC_API_HEADERS,
         "cache-control": "public, max-age=900, stale-while-revalidate=3600",
       },
       body: JSON.stringify({ ok: true, data: value }),
@@ -120,14 +125,14 @@ export async function handler(event) {
     if (cache) {
       return {
         statusCode: 200,
-        headers: { "content-type": "application/json; charset=utf-8" },
+        headers: PUBLIC_API_HEADERS,
         body: JSON.stringify({ ok: true, data: { ...cache.value, cached: true, stale: true } }),
       };
     }
 
     return {
       statusCode: 502,
-      headers: { "content-type": "application/json; charset=utf-8" },
+      headers: PUBLIC_API_HEADERS,
       body: JSON.stringify({ ok: false, error: error.message || "Fear & Greed lookup failed" }),
     };
   }
