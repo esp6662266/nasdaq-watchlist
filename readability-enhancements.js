@@ -905,14 +905,15 @@
   let paused = false;
   let resumeTimer;
 
-  const quoteFor = (item) => item.symbols.map((symbol) => quotes[symbol]).find(Boolean);
+  const quoteFor = (item) => item.symbols.map((symbol) => quotes[symbol])
+    .find((quote) => Number.isFinite(quote?.close) && quote.close > 0);
   const formatValue = (item, value) => {
-    if (!Number.isFinite(Number(value))) return "데이터 대기";
+    if (!Number.isFinite(value)) return "데이터 대기";
     const text = Number(value).toLocaleString("en-US", { minimumFractionDigits: item.digits, maximumFractionDigits: item.digits });
     return text;
   };
   const movement = (change) => {
-    if (!Number.isFinite(Number(change))) return { text: "—", color: "#64748b", background: "#f1f5f9" };
+    if (!Number.isFinite(change)) return { text: "—", color: "#64748b", background: "#f1f5f9" };
     const value = Number(change);
     return value > 0.03
       ? { text: `▲ +${value.toFixed(2)}%`, color: "#047857", background: "#d1fae5" }
@@ -932,7 +933,7 @@
         const cell = document.createElement("div");
         cell.style.cssText = "display:flex;min-width:188px;align-items:center;justify-content:space-between;gap:10px;border-right:1px solid #e2e8f0;padding:0 13px;color:#0f172a";
         const label = document.createElement("span");
-        label.textContent = item.label;
+        label.textContent = quote && quote.symbol === item.symbols[1] ? `${quote.symbol} ETF` : item.label;
         label.style.cssText = "min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:950;letter-spacing:.01em";
         const values = document.createElement("span");
         values.style.cssText = "display:flex;align-items:center;gap:6px;white-space:nowrap";

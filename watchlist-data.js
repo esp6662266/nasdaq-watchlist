@@ -18,6 +18,8 @@
       if (prior?.requestId > id) continue;
       const result = records?.[symbol] ?? records?.[key] ?? records?.[key.replace(/^BRK-B$/, "BRK.B")];
       const usable = Number.isFinite(result?.close) && result.close > 0;
+      const previousTime = Date.parse(prior?.data?.asOf);
+      if (usable && Number.isFinite(previousTime) && !(Date.parse(result.asOf) >= previousTime)) continue;
       quotes.set(key, {
         data: usable ? result : prior?.data,
         failed: !usable,

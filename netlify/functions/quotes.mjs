@@ -3,18 +3,16 @@ const PUBLIC_API_HEADERS = {
   "access-control-allow-origin": "https://esp6662266.github.io",
 };
 
-const QUOTE_TTL_MS = 2 * 60 * 1000;
+const QUOTE_TTL_MS = 30_000;
 const PE_TTL_MS = 12 * 60 * 60 * 1000;
 const PROVIDER_TIMEOUT_MS = 4000;
 const quoteCache = new Map();
 const peCache = new Map();
 
 function normalizeStockSymbol(value) {
-  return String(value || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9.-]/g, "")
-    .slice(0, 12);
+  const symbol = String(value || "").trim().toUpperCase();
+  if (symbol.startsWith("^")) return /^\^[A-Z0-9.-]{1,11}$/.test(symbol) ? symbol : "";
+  return symbol.replace(/[^A-Z0-9.-]/g, "").slice(0, 12);
 }
 
 function toLookupSymbol(symbol) {
@@ -286,7 +284,8 @@ async function fetchYahooQuote(symbol) {
     volume: isRegular ? parseNumeric(meta.regularMarketVolume) : null,
     change,
     changePercent,
-    assetType: String(meta.instrumentType || "").toLowerCase() === "etf" ? "etf" : "stock",
+    assetType: symbol.startsWith("^") ? "index"
+      : String(meta.instrumentType || "").toLowerCase() === "etf" ? "etf" : "stock",
   };
 }
 
@@ -296,7 +295,8 @@ async function fetchQuote(symbol, refresh = false) {
     return { ...cached.value, cached: true };
   }
 
-  for (const fetchProvider of [fetchYahooQuote, fetchStockAnalysisQuote, fetchStooqQuote]) {
+  const providers = symbol.startsWith("^") ? [fetchYahooQuote] : [fetchYahooQuote, fetchStockAnalysisQuote, fetchStooqQuote];
+  for (const fetchProvider of providers) {
     const quote = await fetchProvider(symbol).catch(() => null);
     if (!quote) continue;
     const updatedAt = Date.now();
@@ -400,7 +400,7 @@ export async function handler(event) {
       symbols.map(async (symbol) => {
         try {
           const quote = await fetchQuote(symbol, refresh);
-          const peRatio = quote.error || quote.assetType === "etf"
+          const peRatio = quote.error || quote.assetType === "etf" || symbol.startsWith("^")
             ? null
             : await fetchPeRatio(symbol).catch(() => null);
           return [symbol, { ...quote, peRatio }];
@@ -415,7 +415,7 @@ export async function handler(event) {
       headers: {
         ...PUBLIC_API_HEADERS,
         "cache-control": refresh || entries.some(([, quote]) => quote.error || quote.stale)
-          ? "no-store" : "public, max-age=60, stale-while-revalidate=120",
+          ? "no-store" : "public, max-age=15, must-revalidate",
       },
       body: JSON.stringify({ ok: true, quotes: Object.fromEntries(entries) }),
     };
