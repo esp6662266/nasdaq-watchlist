@@ -3,7 +3,7 @@ const PUBLIC_API_HEADERS = {
   "access-control-allow-origin": "https://esp6662266.github.io",
 };
 
-const QUOTE_TTL_MS = 30_000;
+const QUOTE_TTL_MS = 10_000;
 const PE_TTL_MS = 12 * 60 * 60 * 1000;
 const PROVIDER_TIMEOUT_MS = 4000;
 const quoteCache = new Map();
@@ -410,12 +410,13 @@ export async function handler(event) {
       }),
     );
 
+    const partial = entries.some(([, quote]) => quote.error || quote.stale);
     return {
       statusCode: 200,
       headers: {
         ...PUBLIC_API_HEADERS,
-        "cache-control": refresh || entries.some(([, quote]) => quote.error || quote.stale)
-          ? "no-store" : "public, max-age=15, must-revalidate",
+        "cache-control": refresh ? "no-store" : "public, max-age=1, must-revalidate",
+        "netlify-cdn-cache-control": refresh ? "no-store" : `public, durable, max-age=${partial ? 4 : 8}`,
       },
       body: JSON.stringify({ ok: true, quotes: Object.fromEntries(entries) }),
     };
